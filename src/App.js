@@ -79,6 +79,24 @@ export default function GymTracker() {
     localStorage.setItem("gymCustomPlans", JSON.stringify(customPlans));
   }, [customPlans]);
 
+  // Save active workout to localStorage
+  useEffect(() => {
+    if (activeWorkout) {
+      localStorage.setItem("activeWorkout", JSON.stringify(activeWorkout));
+    } else {
+      localStorage.removeItem("activeWorkout");
+    }
+  }, [activeWorkout]);
+
+  // Restore active workout on load
+  useEffect(() => {
+    const savedActive = localStorage.getItem("activeWorkout");
+    if (savedActive) {
+      setActiveWorkout(JSON.parse(savedActive));
+      setScreen("workout");
+    }
+  }, []);
+
   const getAllKnownExercises = () => {
     const fromPlans = [...exercises.push, ...exercises.pull];
     const fromHistory = workouts.flatMap((w) => w.exercises.map((e) => e.name));
@@ -936,14 +954,14 @@ export default function GymTracker() {
                       {exercise.sets.map((set, idx) => (
                         <div key={idx}>
                           {exercise.lastSets?.[idx] && (
-                            <div className="text-xs text-cyan-400 mb-1.5 ml-12">
+                            <div className="text-xs text-cyan-400 mb-1.5 ml-2">
                               Last: {exercise.lastSets[idx].weight}kg ×{" "}
                               {exercise.lastSets[idx].reps}
                             </div>
                           )}
-                          <div className="flex items-center gap-2">
-                            <div className="w-10 text-xs text-zinc-500 text-right">
-                              Set {idx + 1}
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-12 text-xs text-zinc-500 text-right shrink-0">
+                              S{idx + 1}
                             </div>
                             <input
                               type="number"
@@ -957,7 +975,7 @@ export default function GymTracker() {
                                   e.target.value
                                 )
                               }
-                              className="flex-1 bg-zinc-900 border-2 rounded-lg px-3 py-3 text-center font-medium focus:outline-none focus:border-cyan-500 transition"
+                              className="w-20 bg-zinc-900 border-2 rounded-lg px-2 py-2.5 text-center text-sm font-medium focus:outline-none focus:border-cyan-500 transition"
                               placeholder="0"
                               style={{
                                 borderColor: getColor(
@@ -966,8 +984,9 @@ export default function GymTracker() {
                                 ),
                               }}
                             />
-                            <span className="text-xs text-zinc-600">kg</span>
-                            <span className="text-zinc-600">×</span>
+                            <span className="text-xs text-zinc-600 shrink-0">
+                              kg
+                            </span>
                             <input
                               type="number"
                               value={set.reps || ""}
@@ -979,7 +998,7 @@ export default function GymTracker() {
                                   e.target.value
                                 )
                               }
-                              className="flex-1 bg-zinc-900 border-2 rounded-lg px-3 py-3 text-center font-medium focus:outline-none focus:border-cyan-500 transition"
+                              className="w-16 bg-zinc-900 border-2 rounded-lg px-2 py-2.5 text-center text-sm font-medium focus:outline-none focus:border-cyan-500 transition"
                               placeholder="0"
                               style={{
                                 borderColor: getColor(
@@ -988,11 +1007,13 @@ export default function GymTracker() {
                                 ),
                               }}
                             />
-                            <span className="text-xs text-zinc-600">reps</span>
+                            <span className="text-xs text-zinc-600 shrink-0">
+                              rep
+                            </span>
                             {exercise.sets.length > 1 && (
                               <button
                                 onClick={() => removeSet(exercise.id, idx)}
-                                className="text-zinc-600 hover:text-rose-400 ml-1 transition"
+                                className="text-zinc-600 hover:text-rose-400 transition shrink-0"
                               >
                                 <X size={16} />
                               </button>
