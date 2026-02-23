@@ -565,6 +565,7 @@ export default function GymTracker() {
             return (
               <div>
                 <h2 className="text-2xl font-semibold mb-6">
+                  <Calendar size={24} className="inline mr-2 mb-1" />
                   {months[cm]} {cy}
                 </h2>
                 <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5">
@@ -739,7 +740,7 @@ export default function GymTracker() {
             <h2 className="text-2xl font-semibold mb-6">Workout History</h2>
             {workouts.length === 0 ? (
               <div className="text-center py-20 text-zinc-600">
-                <Dumbbell size={48} className="mx-auto mb-4 opacity-50" />
+                <TrendingUp size={48} className="mx-auto mb-4 opacity-50" />
                 <p>No workouts yet!</p>
               </div>
             ) : (
