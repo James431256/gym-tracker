@@ -360,6 +360,7 @@ export default function GymTracker() {
       return acc;
     }, {});
     return { daysInMonth, startDow, wDates, cm, cy };
+    return { daysInMonth, startDow, wDates, cm, cy };
   };
 
   const getInsights = () => {
