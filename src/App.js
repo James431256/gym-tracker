@@ -9,7 +9,6 @@ import {
   X,
   ArrowLeft,
   Zap,
-  Activity,
 } from "lucide-react";
 
 export default function GymTracker() {
@@ -359,7 +358,6 @@ export default function GymTracker() {
       acc[d].push(w.type);
       return acc;
     }, {});
-    return { daysInMonth, startDow, wDates, cm, cy };
     return { daysInMonth, startDow, wDates, cm, cy };
   };
 
