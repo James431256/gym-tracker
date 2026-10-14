@@ -11,10 +11,24 @@ import {
   Zap,
 } from "lucide-react";
 
+const loadSaved = (key, fallback) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export default function GymTracker() {
-  const [screen, setScreen] = useState("home");
-  const [workouts, setWorkouts] = useState([]);
-  const [activeWorkout, setActiveWorkout] = useState(null);
+  // Read saved data during the first render so nothing can overwrite it before it loads
+  const [activeWorkout, setActiveWorkout] = useState(() =>
+    loadSaved("activeWorkout", null)
+  );
+  const [screen, setScreen] = useState(() =>
+    loadSaved("activeWorkout", null) ? "workout" : "home"
+  );
+  const [workouts, setWorkouts] = useState(() => loadSaved("gymWorkouts", []));
   const [showExerciseModal, setShowExerciseModal] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState("");
   const [exerciseToDelete, setExerciseToDelete] = useState(null);
@@ -32,9 +46,11 @@ export default function GymTracker() {
   const [addExerciseAt, setAddExerciseAt] = useState(null);
   const [addExerciseSearch, setAddExerciseSearch] = useState("");
   const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
-  const [customPlans, setCustomPlans] = useState([]);
+  const [customPlans, setCustomPlans] = useState(() =>
+    loadSaved("gymCustomPlans", [])
+  );
 
-  const [exercises, setExercises] = useState({
+  const [exercises, setExercises] = useState(() => loadSaved("gymExercises", {
     pull: [
       "Lat Pulldowns",
       "T-Bar Row",
@@ -56,20 +72,10 @@ export default function GymTracker() {
       "Tricep Extensions",
       "Seatbelts",
     ],
-  });
+  }));
 
   useEffect(() => {
-    const sw = localStorage.getItem("gymWorkouts");
-    const se = localStorage.getItem("gymExercises");
-    const sc = localStorage.getItem("gymCustomPlans");
-    if (sw) setWorkouts(JSON.parse(sw));
-    if (se) setExercises(JSON.parse(se));
-    if (sc) setCustomPlans(JSON.parse(sc));
-  }, []);
-
-  useEffect(() => {
-    if (workouts.length > 0)
-      localStorage.setItem("gymWorkouts", JSON.stringify(workouts));
+    localStorage.setItem("gymWorkouts", JSON.stringify(workouts));
   }, [workouts]);
 
   useEffect(() => {
@@ -87,15 +93,6 @@ export default function GymTracker() {
       localStorage.removeItem("activeWorkout");
     }
   }, [activeWorkout]);
-
-  // Restore active workout on load
-  useEffect(() => {
-    const savedActive = localStorage.getItem("activeWorkout");
-    if (savedActive) {
-      setActiveWorkout(JSON.parse(savedActive));
-      setScreen("workout");
-    }
-  }, []);
 
   const getAllKnownExercises = () => {
     const fromPlans = [...exercises.push, ...exercises.pull];
