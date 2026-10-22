@@ -20,6 +20,164 @@ const loadSaved = (key, fallback) => {
   }
 };
 
+// Target rep range for double progression: build reps up to the top, then add weight
+const REP_MIN = 8;
+const REP_MAX = 10;
+
+const DAYS = [
+  {
+    id: "back",
+    name: "Back",
+    desc: "Lats, Upper Back, Rear Delts",
+    card: "bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/20",
+    tag: "bg-blue-500/10 border-blue-500/20 text-blue-400",
+    btn: "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20",
+    text: "text-blue-400",
+    icon: "text-blue-500",
+    dot: "bg-blue-500",
+  },
+  {
+    id: "chest",
+    name: "Chest",
+    desc: "Presses, Flys",
+    card: "bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20",
+    tag: "bg-rose-500/10 border-rose-500/20 text-rose-400",
+    btn: "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20",
+    text: "text-rose-400",
+    icon: "text-rose-500",
+    dot: "bg-rose-500",
+  },
+  {
+    id: "shoulders_arms",
+    name: "Shoulders & Arms",
+    desc: "Delts, Biceps, Triceps",
+    card: "bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/20",
+    tag: "bg-amber-500/10 border-amber-500/20 text-amber-400",
+    btn: "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
+    text: "text-amber-400",
+    icon: "text-amber-500",
+    dot: "bg-amber-500",
+  },
+];
+
+const DEFAULT_EXERCISES = {
+  back: [
+    "Lat Pulldowns",
+    "T-Bar Row",
+    "Row",
+    "Assisted Pull Ups",
+    "Pec Rear Delts",
+  ],
+  chest: [
+    "Smith Machine",
+    "Chest Press Machine",
+    "Cable Chest Exercise",
+    "Chest Press (Hands Touch)",
+    "Flys",
+  ],
+  shoulders_arms: [
+    "Shoulder Press",
+    "Lat Raises",
+    "Seatbelts",
+    "Bicep Curls",
+    "Preacher Curls",
+    "Barbell Skull Crushers",
+    "Tricep Extensions",
+  ],
+};
+
+// Move exercise lists saved under the old push/pull split onto the new days
+const migrateExercises = (saved) => {
+  if (!saved) return DEFAULT_EXERCISES;
+  if (!saved.push && !saved.pull) return { ...DEFAULT_EXERCISES, ...saved };
+  const result = { back: [], chest: [], shoulders_arms: [] };
+  const old = [
+    ...(saved.pull || []).map((name) => [name, "back"]),
+    ...(saved.push || []).map((name) => [name, "chest"]),
+  ];
+  old.forEach(([name, fallback]) => {
+    const known = Object.keys(DEFAULT_EXERCISES).find((d) =>
+      DEFAULT_EXERCISES[d].includes(name)
+    );
+    const looksLikeArmsOrShoulders =
+      /curl|bicep|tricep|skull|pushdown|extension|shoulder|lateral|raise|arnold/i.test(
+        name
+      );
+    const day =
+      known || (looksLikeArmsOrShoulders ? "shoulders_arms" : fallback);
+    if (!result[day].includes(name)) result[day].push(name);
+  });
+  // Keep the default ordering for known exercises, anything new goes last
+  Object.keys(result).forEach((d) => {
+    const order = (n) => {
+      const i = DEFAULT_EXERCISES[d].indexOf(n);
+      return i === -1 ? Infinity : i;
+    };
+    result[d].sort((a, b) => order(a) - order(b));
+  });
+  return result;
+};
+
+const completedSets = (sets) =>
+  (sets || []).filter((s) => (s.reps || 0) > 0);
+
+const roundWeight = (w) => Math.max(0, Math.round(w * 100) / 100);
+
+// Double progression on an 8-10 rep range:
+// - every set at the same weight hit 10+ reps -> add the smallest weight jump
+// - every set within 8-10 -> same weight, chase 10 on every set
+// - fell short of 8 -> same weight, unless it's well short or the second
+//   session in a row below 8, then drop the weight
+const recommend = (exerciseName, history, jump) => {
+  const sets = completedSets(history[0]?.sets);
+  if (!sets.length) return null;
+  const weight = sets[0].weight || 0;
+  const sameWeight = sets.every((s) => (s.weight || 0) === weight);
+  const minReps = Math.min(...sets.map((s) => s.reps));
+  // On assisted machines less assistance is harder
+  const assisted = /assist/i.test(exerciseName);
+  const harder = roundWeight(assisted ? weight - jump : weight + jump);
+  const easier = roundWeight(assisted ? weight + jump : weight - jump);
+
+  if (sameWeight && minReps >= REP_MAX)
+    return {
+      action: "up",
+      weight: harder,
+      assisted,
+      reason: `Hit ${REP_MAX}+ reps on every set`,
+    };
+
+  if (minReps < REP_MIN) {
+    const prev = completedSets(history[1]?.sets);
+    const shortTwiceInARow =
+      prev.length &&
+      (prev[0].weight || 0) === weight &&
+      Math.min(...prev.map((s) => s.reps)) < REP_MIN;
+    if (minReps <= REP_MIN - 3 || shortTwiceInARow)
+      return {
+        action: "down",
+        weight: easier,
+        assisted,
+        reason: shortTwiceInARow
+          ? `Under ${REP_MIN} reps two sessions running`
+          : `Only ${minReps} reps, too heavy for now`,
+      };
+    return {
+      action: "stay",
+      weight,
+      reason: `Get every set to ${REP_MIN}+ reps`,
+    };
+  }
+
+  return {
+    action: "stay",
+    weight,
+    reason: sameWeight
+      ? `Aim for ${REP_MAX} reps on every set`
+      : `Get every set to ${REP_MAX} at ${weight}kg`,
+  };
+};
+
 export default function GymTracker() {
   // Read saved data during the first render so nothing can overwrite it before it loads
   const [activeWorkout, setActiveWorkout] = useState(() =>
@@ -50,28 +208,13 @@ export default function GymTracker() {
     loadSaved("gymCustomPlans", [])
   );
 
-  const [exercises, setExercises] = useState(() => loadSaved("gymExercises", {
-    pull: [
-      "Lat Pulldowns",
-      "T-Bar Row",
-      "Row",
-      "Assisted Pull Ups",
-      "Pec Rear Delts",
-      "Bicep Curls",
-      "Preacher Curls",
-    ],
-    push: [
-      "Smith Machine",
-      "Chest Press Machine",
-      "Cable Chest Exercise",
-      "Chest Press (Hands Touch)",
-      "Flys",
-      "Lat Raises",
-      "Shoulder Press",
-      "Barbell Skull Crushers",
-      "Tricep Extensions",
-      "Seatbelts",
-    ],
+  const [exercises, setExercises] = useState(() =>
+    migrateExercises(loadSaved("gymExercises", null))
+  );
+  const [settings, setSettings] = useState(() => ({
+    defaultSets: 2,
+    weightJump: 2.5,
+    ...loadSaved("gymSettings", {}),
   }));
 
   useEffect(() => {
@@ -84,6 +227,9 @@ export default function GymTracker() {
   useEffect(() => {
     localStorage.setItem("gymCustomPlans", JSON.stringify(customPlans));
   }, [customPlans]);
+  useEffect(() => {
+    localStorage.setItem("gymSettings", JSON.stringify(settings));
+  }, [settings]);
 
   // Save active workout to localStorage
   useEffect(() => {
@@ -95,66 +241,22 @@ export default function GymTracker() {
   }, [activeWorkout]);
 
   const getAllKnownExercises = () => {
-    const fromPlans = [...exercises.push, ...exercises.pull];
+    const fromPlans = Object.values(exercises).flat();
     const fromHistory = workouts.flatMap((w) => w.exercises.map((e) => e.name));
     const fromCustom = customPlans.flatMap((p) => p.exercises);
     return [...new Set([...fromPlans, ...fromHistory, ...fromCustom])].sort();
   };
 
-  const getLastWorkoutData = (workoutType, exerciseName) => {
-    const last = workouts
-      .filter((w) => w.type === workoutType)
-      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-    if (!last) return null;
-    const ex = last.exercises.find((e) => e.name === exerciseName);
-    return ex?.sets || null;
-  };
-
-  const getLastWorkoutDataAny = (exerciseName) => {
-    const last = workouts
+  // Past sessions of an exercise on any day, newest first
+  const getExerciseHistory = (exerciseName) =>
+    workouts
       .filter((w) => w.exercises.some((e) => e.name === exerciseName))
-      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-    if (!last) return null;
-    const ex = last.exercises.find((e) => e.name === exerciseName);
-    return ex?.sets || null;
-  };
-
-  const getRecommendation = (exerciseName, workoutType) => {
-    const relevant = workouts
-      .filter(
-        (w) =>
-          w.type === workoutType &&
-          w.exercises.some((e) => e.name === exerciseName)
-      )
       .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 3);
-    if (!relevant.length) return null;
-    const lastSession = relevant[0].exercises.find(
-      (e) => e.name === exerciseName
-    );
-    if (!lastSession) return null;
-    const avgReps =
-      lastSession.sets.reduce((s, r) => s + (r.reps || 0), 0) /
-      lastSession.sets.length;
-    const lastWeight = lastSession.sets[0]?.weight || 0;
-    if (avgReps >= 10)
-      return {
-        msg: `${Math.round(avgReps)} reps — try ${lastWeight + 2.5}kg`,
-        color: "text-emerald-400",
-      };
-    if (avgReps <= 6)
-      return {
-        msg: `${Math.round(avgReps)} reps — drop to ${Math.max(
-          0,
-          lastWeight - 2.5
-        )}kg`,
-        color: "text-rose-400",
-      };
-    return {
-      msg: `${Math.round(avgReps)} reps — push for ${Math.round(avgReps) + 2}`,
-      color: "text-amber-400",
-    };
-  };
+      .map((w) => ({
+        date: w.date,
+        sets: w.exercises.find((e) => e.name === exerciseName).sets,
+      }))
+      .filter((h) => completedSets(h.sets).length);
 
   const handleWorkoutStart = (type) => {
     setPendingWorkoutType(type);
@@ -164,30 +266,36 @@ export default function GymTracker() {
     setShowDatePicker(true);
   };
 
-  const buildExerciseEntry = (exerciseName, type) => {
-    const lastSets = type
-      ? getLastWorkoutData(type, exerciseName)
-      : getLastWorkoutDataAny(exerciseName);
+  const buildExerciseEntry = (exerciseName) => {
+    const history = getExerciseHistory(exerciseName);
+    const last = history[0] || null;
+    const rec = recommend(exerciseName, history, settings.weightJump);
+    const lastSets = last ? completedSets(last.sets) : null;
+    // Pre-fill the recommended weight; keep last reps only when the weight is unchanged
+    const sets = Array.from({ length: settings.defaultSets }, (_, i) => {
+      const prev = lastSets?.[i] || lastSets?.[lastSets.length - 1];
+      const weight = rec ? rec.weight : prev?.weight || 0;
+      return {
+        weight,
+        reps: prev && prev.weight === weight ? prev.reps : 0,
+      };
+    });
     return {
       id: Date.now() + Math.random(),
       name: exerciseName,
-      sets: [
-        { weight: lastSets?.[0]?.weight || 0, reps: lastSets?.[0]?.reps || 0 },
-        { weight: lastSets?.[1]?.weight || 0, reps: lastSets?.[1]?.reps || 0 },
-        { weight: lastSets?.[2]?.weight || 0, reps: lastSets?.[2]?.reps || 0 },
-      ],
-      lastSets: lastSets || null,
+      sets,
+      lastSets,
+      lastDate: last?.date || null,
+      rec,
     };
   };
 
   const startWorkout = (type) => {
-    let list =
-      type === "push"
-        ? exercises.push
-        : type === "pull"
-        ? exercises.pull
-        : customPlans.find((p) => p.id === type)?.exercises || [];
-    const workoutExercises = list.map((n) => buildExerciseEntry(n, type));
+    const list =
+      exercises[type] ||
+      customPlans.find((p) => p.id === type)?.exercises ||
+      [];
+    const workoutExercises = list.map((n) => buildExerciseEntry(n));
     const workoutDate =
       selectedDate && selectedTime
         ? new Date(`${selectedDate}T${selectedTime}`).toISOString()
@@ -251,7 +359,7 @@ export default function GymTracker() {
   };
 
   const insertExercise = (name) => {
-    const entry = buildExerciseEntry(name, activeWorkout?.type);
+    const entry = buildExerciseEntry(name);
     setActiveWorkout((aw) => {
       const exs = [...aw.exercises];
       if (addExerciseAt === "end") {
@@ -340,25 +448,24 @@ export default function GymTracker() {
   };
 
   const getColor = (cur, last) => {
-    if (last == null) return "#52525b";
+    if (last == null || !cur) return "#52525b";
     const c = parseFloat(cur) || 0,
       l = parseFloat(last) || 0;
     return c > l ? "#10b981" : c < l ? "#ef4444" : "#52525b";
   };
 
+  const getDay = (type) => DAYS.find((d) => d.id === type);
+
   const getWorkoutLabel = (type) => {
+    if (getDay(type)) return getDay(type).name;
     if (type === "push") return "Push";
     if (type === "pull") return "Pull";
     return customPlans.find((p) => p.id === type)?.name || "Custom";
   };
 
-  const getWorkoutColor = (type) => {
-    if (type === "push")
-      return "bg-rose-500/10 border-rose-500/20 text-rose-400";
-    if (type === "pull")
-      return "bg-blue-500/10 border-blue-500/20 text-blue-400";
-    return "bg-purple-500/10 border-purple-500/20 text-purple-400";
-  };
+  const getWorkoutColor = (type) =>
+    getDay(type)?.tag ||
+    "bg-purple-500/10 border-purple-500/20 text-purple-400";
 
   const getCalendarData = () => {
     const today = new Date();
@@ -380,11 +487,20 @@ export default function GymTracker() {
     const ago = new Date();
     ago.setDate(ago.getDate() - 28);
     const last4 = workouts.filter((w) => new Date(w.date) >= ago);
-    return {
-      push: last4.filter((w) => w.type === "push").length,
-      pull: last4.filter((w) => w.type === "pull").length,
-      total: last4.length,
-    };
+    const byDay = DAYS.map((d) => ({
+      ...d,
+      count: last4.filter((w) => w.type === d.id).length,
+    }));
+    const other = last4.length - byDay.reduce((s, d) => s + d.count, 0);
+    if (other > 0)
+      byDay.push({
+        id: "other",
+        name: "Custom / Old Push & Pull",
+        text: "text-purple-400",
+        dot: "bg-purple-500",
+        count: other,
+      });
+    return { byDay, total: last4.length };
   };
 
   const filteredKnown = getAllKnownExercises().filter((e) =>
@@ -468,44 +584,32 @@ export default function GymTracker() {
               </button>
             ))}
 
-            <button
-              onClick={() => handleWorkoutStart("push")}
-              className="w-full mb-3 text-left"
-            >
-              <div className="bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-2xl p-6 transition">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-lg font-semibold text-rose-400 mb-0.5">
-                      Push
+            {DAYS.map((day) => (
+              <button
+                key={day.id}
+                onClick={() => handleWorkoutStart(day.id)}
+                className="w-full mb-3 text-left"
+              >
+                <div
+                  className={`${day.card} border rounded-2xl p-6 transition`}
+                >
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div
+                        className={`text-lg font-semibold ${day.text} mb-0.5`}
+                      >
+                        {day.name}
+                      </div>
+                      <div className="text-sm text-zinc-400">
+                        {day.desc} • {exercises[day.id]?.length || 0}{" "}
+                        exercises
+                      </div>
                     </div>
-                    <div className="text-sm text-zinc-400">
-                      Chest, Shoulders, Triceps • {exercises.push.length}{" "}
-                      exercises
-                    </div>
+                    <ArrowLeft className={`rotate-180 ${day.icon}`} size={20} />
                   </div>
-                  <ArrowLeft className="rotate-180 text-rose-500" size={20} />
                 </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => handleWorkoutStart("pull")}
-              className="w-full mb-3 text-left"
-            >
-              <div className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-2xl p-6 transition">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-lg font-semibold text-blue-400 mb-0.5">
-                      Pull
-                    </div>
-                    <div className="text-sm text-zinc-400">
-                      Back, Biceps • {exercises.pull.length} exercises
-                    </div>
-                  </div>
-                  <ArrowLeft className="rotate-180 text-blue-500" size={20} />
-                </div>
-              </div>
-            </button>
+              </button>
+            ))}
 
             <button
               onClick={() => {
@@ -619,13 +723,13 @@ export default function GymTracker() {
                           <span className="text-sm font-medium">{day}</span>
                           {dw.length > 0 && (
                             <div className="flex gap-0.5 mt-1">
-                              {dw.includes("push") && (
-                                <div className="w-1 h-1 rounded-full bg-rose-500" />
-                              )}
-                              {dw.includes("pull") && (
-                                <div className="w-1 h-1 rounded-full bg-blue-500" />
-                              )}
-                              {dw.some((t) => t !== "push" && t !== "pull") && (
+                              {DAYS.filter((d) => dw.includes(d.id)).map((d) => (
+                                <div
+                                  key={d.id}
+                                  className={`w-1 h-1 rounded-full ${d.dot}`}
+                                />
+                              ))}
+                              {dw.some((t) => !getDay(t)) && (
                                 <div className="w-1 h-1 rounded-full bg-purple-500" />
                               )}
                             </div>
@@ -635,18 +739,16 @@ export default function GymTracker() {
                     })}
                   </div>
                 </div>
-                <div className="mt-5 flex gap-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-rose-500" />
-                    <span className="text-zinc-500">Push</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-blue-500" />
-                    <span className="text-zinc-500">Pull</span>
-                  </div>
+                <div className="mt-5 flex flex-wrap gap-4 text-xs">
+                  {DAYS.map((d) => (
+                    <div key={d.id} className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${d.dot}`} />
+                      <span className="text-zinc-500">{d.name}</span>
+                    </div>
+                  ))}
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    <span className="text-zinc-500">Custom</span>
+                    <span className="text-zinc-500">Other</span>
                   </div>
                 </div>
                 <div className="mt-5 bg-zinc-900/50 border border-zinc-800 rounded-xl p-5">
@@ -669,7 +771,7 @@ export default function GymTracker() {
 
         {screen === "insights" &&
           (() => {
-            const { push, pull, total } = getInsights();
+            const { byDay, total } = getInsights();
             return (
               <div>
                 <h2 className="text-2xl font-semibold mb-6">Training Stats</h2>
@@ -694,34 +796,24 @@ export default function GymTracker() {
                 <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5 mb-5">
                   <h3 className="text-sm font-medium mb-4">Workout Split</h3>
                   <div className="space-y-4">
-                    <div>
-                      <div className="flex justify-between mb-2 text-sm">
-                        <span className="text-rose-400">Push Days</span>
-                        <span className="font-medium">{push}</span>
+                    {byDay.map((d) => (
+                      <div key={d.id}>
+                        <div className="flex justify-between mb-2 text-sm">
+                          <span className={d.text}>{d.name}</span>
+                          <span className="font-medium">{d.count}</span>
+                        </div>
+                        <div className="bg-zinc-800 rounded-full h-2">
+                          <div
+                            className={`${d.dot} h-2 rounded-full transition-all`}
+                            style={{
+                              width: `${
+                                total > 0 ? (d.count / total) * 100 : 0
+                              }%`,
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="bg-zinc-800 rounded-full h-2">
-                        <div
-                          className="bg-rose-500 h-2 rounded-full transition-all"
-                          style={{
-                            width: `${total > 0 ? (push / total) * 100 : 0}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-2 text-sm">
-                        <span className="text-blue-400">Pull Days</span>
-                        <span className="font-medium">{pull}</span>
-                      </div>
-                      <div className="bg-zinc-800 rounded-full h-2">
-                        <div
-                          className="bg-blue-500 h-2 rounded-full transition-all"
-                          style={{
-                            width: `${total > 0 ? (pull / total) * 100 : 0}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
                 <div className="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 rounded-2xl p-5">
@@ -730,19 +822,24 @@ export default function GymTracker() {
                   </h3>
                   <ul className="space-y-2 text-sm text-zinc-300">
                     <li>
-                      • <strong>10-12 reps:</strong> Increase weight by 2.5-5kg
+                      • <strong>Rep range:</strong> {REP_MIN}-{REP_MAX} reps
+                      on every working set
                     </li>
                     <li>
-                      • <strong>7-9 reps:</strong> Push for 1-2 more reps
+                      • <strong>{REP_MAX}+ on every set:</strong> go up by the
+                      smallest jump ({settings.weightJump}kg)
                     </li>
                     <li>
-                      • <strong>6 or less:</strong> Drop weight by 2.5kg
+                      • <strong>{REP_MIN}-{REP_MAX - 1} reps:</strong> same
+                      weight, add a rep where you can
                     </li>
                     <li>
-                      • <strong>Deload:</strong> Every 4-6 weeks, reduce 20%
+                      • <strong>Under {REP_MIN} twice in a row:</strong> drop
+                      the weight a step
                     </li>
                     <li>
-                      • <strong>Rest:</strong> 60-90s between sets
+                      • <strong>Rest:</strong> 2-3 min between sets so reps
+                      don't drop off
                     </li>
                   </ul>
                 </div>
@@ -851,39 +948,86 @@ export default function GymTracker() {
               </div>
             )}
 
-            {["push", "pull"].map((type) => (
-              <div key={type} className="mb-6">
+            <div className="mb-6 bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="text-sm font-medium">Sets per exercise</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">
+                    You can still add a set during a workout
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  {[2, 3].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() =>
+                        setSettings({ ...settings, defaultSets: n })
+                      }
+                      className={`w-10 py-1.5 rounded-lg text-sm font-medium transition ${
+                        settings.defaultSets === n
+                          ? "bg-cyan-500 text-white"
+                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="text-sm font-medium">Weight jump</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">
+                    How much to go up or down by
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  {[1, 2, 2.5, 5].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() =>
+                        setSettings({ ...settings, weightJump: n })
+                      }
+                      className={`px-2.5 py-1.5 rounded-lg text-sm font-medium transition ${
+                        settings.weightJump === n
+                          ? "bg-cyan-500 text-white"
+                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {DAYS.map((day) => (
+              <div key={day.id} className="mb-6">
                 <div className="flex justify-between items-center mb-3">
-                  <h3
-                    className={`text-sm font-medium ${
-                      type === "push" ? "text-rose-400" : "text-blue-400"
-                    }`}
-                  >
-                    {type === "push" ? "Push" : "Pull"} Day Exercises
+                  <h3 className={`text-sm font-medium ${day.text}`}>
+                    {day.name} Exercises
                   </h3>
                   <button
                     onClick={() => {
-                      setEditingType(type);
+                      setEditingType(day.id);
                       setShowExerciseModal(true);
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                      type === "push"
-                        ? "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
-                        : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-                    }`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${day.btn}`}
                   >
                     + Add
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {exercises[type].map((ex, i) => (
+                  {(exercises[day.id] || []).map((ex, i) => (
                     <div
                       key={i}
                       className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 flex justify-between items-center"
                     >
                       <span className="text-sm">{ex}</span>
                       <button
-                        onClick={() => setExerciseToDelete({ type, name: ex })}
+                        onClick={() =>
+                          setExerciseToDelete({ type: day.id, name: ex })
+                        }
                         className="text-zinc-500 hover:text-rose-400 transition"
                       >
                         <Trash2 size={16} />
@@ -911,7 +1055,38 @@ export default function GymTracker() {
             </div>
 
             {activeWorkout.exercises.map((exercise, index) => {
-              const rec = getRecommendation(exercise.name, activeWorkout.type);
+              // Workouts started before this feature don't carry these yet
+              const history =
+                exercise.rec === undefined
+                  ? getExerciseHistory(exercise.name)
+                  : null;
+              const rec =
+                exercise.rec !== undefined
+                  ? exercise.rec
+                  : recommend(exercise.name, history, settings.weightJump);
+              const lastSets =
+                exercise.lastDate !== undefined
+                  ? exercise.lastSets
+                  : history[0]
+                  ? completedSets(history[0].sets)
+                  : null;
+              const lastDate =
+                exercise.lastDate !== undefined
+                  ? exercise.lastDate
+                  : history[0]?.date;
+              const recStyle = rec && {
+                up: {
+                  arrow: "↑",
+                  label: rec.assisted ? "Less assistance:" : "Go up to",
+                  color: "text-emerald-400",
+                },
+                stay: { arrow: "→", label: "Stay at", color: "text-amber-400" },
+                down: {
+                  arrow: "↓",
+                  label: rec.assisted ? "More assistance:" : "Drop to",
+                  color: "text-rose-400",
+                },
+              }[rec.action];
               return (
                 <div key={exercise.id}>
                   <button
@@ -941,21 +1116,42 @@ export default function GymTracker() {
                       </button>
                     </div>
 
-                    {rec && (
-                      <div className="mb-4 px-3 py-2 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                        <div className={`text-xs ${rec.color}`}>{rec.msg}</div>
+                    {lastSets?.length > 0 ? (
+                      <div className="mb-4 px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50 space-y-1">
+                        <div className="text-xs text-zinc-400">
+                          Last session
+                          {lastDate &&
+                            ` (${new Date(lastDate).toLocaleDateString(
+                              "en-GB",
+                              { day: "numeric", month: "short" }
+                            )})`}
+                          :{" "}
+                          <span className="text-cyan-400">
+                            {lastSets
+                              .map((st) => `${st.weight}kg × ${st.reps}`)
+                              .join(", ")}
+                          </span>
+                        </div>
+                        {rec && (
+                          <div className={`text-sm font-medium ${recStyle.color}`}>
+                            {recStyle.arrow} {recStyle.label} {rec.weight}kg
+                            <span className="text-xs font-normal text-zinc-500">
+                              {" "}
+                              · {rec.reason}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mb-4 text-xs text-zinc-500">
+                        First time: pick a weight you can do for {REP_MIN}-
+                        {REP_MAX} reps
                       </div>
                     )}
 
                     <div className="space-y-3">
                       {exercise.sets.map((set, idx) => (
                         <div key={idx}>
-                          {exercise.lastSets?.[idx] && (
-                            <div className="text-xs text-cyan-400 mb-1.5 ml-2">
-                              Last: {exercise.lastSets[idx].weight}kg ×{" "}
-                              {exercise.lastSets[idx].reps}
-                            </div>
-                          )}
                           <div className="flex items-center gap-1.5">
                             <div className="w-12 text-xs text-zinc-500 text-right shrink-0">
                               S{idx + 1}
@@ -977,7 +1173,7 @@ export default function GymTracker() {
                               style={{
                                 borderColor: getColor(
                                   set.weight,
-                                  exercise.lastSets?.[idx]?.weight
+                                  lastSets?.[idx]?.weight
                                 ),
                               }}
                             />
@@ -1000,7 +1196,7 @@ export default function GymTracker() {
                               style={{
                                 borderColor: getColor(
                                   set.reps,
-                                  exercise.lastSets?.[idx]?.reps
+                                  lastSets?.[idx]?.reps
                                 ),
                               }}
                             />
