@@ -1,24 +1,196 @@
 import React, { useState, useEffect } from "react";
 import {
   Dumbbell,
-  TrendingUp,
-  Calendar,
+  CalendarDays,
+  ChartColumn,
+  History,
+  ClipboardList,
+  ChevronLeft,
+  ChevronRight,
   Plus,
   Trash2,
-  Edit2,
+  Pencil,
   X,
   ArrowLeft,
-  Zap,
 } from "lucide-react";
+import "./App.css";
+
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+const TABS = [
+  ["home", "Train", Dumbbell],
+  ["calendar", "Calendar", CalendarDays],
+  ["insights", "Stats", ChartColumn],
+  ["history", "History", History],
+  ["manage", "Plans", ClipboardList],
+];
+
+const DEFAULT_EXERCISES = {
+  pull: [
+    "Lat Pulldowns",
+    "T-Bar Row",
+    "Row",
+    "Assisted Pull Ups",
+    "Pec Rear Delts",
+    "Bicep Curls",
+    "Preacher Curls",
+  ],
+  push: [
+    "Smith Machine",
+    "Chest Press Machine",
+    "Cable Chest Exercise",
+    "Chest Press (Hands Touch)",
+    "Flys",
+    "Lat Raises",
+    "Shoulder Press",
+    "Barbell Skull Crushers",
+    "Tricep Extensions",
+    "Seatbelts",
+  ],
+};
+
+// Read saved data during the first render, so the save effects never
+// overwrite storage with empty defaults before it has been loaded
+const loadStored = (key, fallback) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const toneFor = (type) =>
+  type === "push" ? "push" : type === "pull" ? "pull" : "custom";
+
+const startOfDay = (d) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+
+const relativeDay = (iso) => {
+  const days = Math.round((startOfDay(new Date()) - startOfDay(iso)) / 864e5);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days > 1 && days < 7) return `${days} days ago`;
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
+};
+
+const compareSet = (set, last) => {
+  if (!last) return "new";
+  const w = set.weight || 0,
+    lw = last.weight || 0,
+    r = set.reps || 0,
+    lr = last.reps || 0;
+  if (w !== lw) return w > lw ? "up" : "down";
+  if (r !== lr) return r > lr ? "up" : "down";
+  return "same";
+};
+
+const STATE_LABEL = {
+  new: "No previous set",
+  up: "Up on last time",
+  same: "Same as last time",
+  down: "Below last time",
+};
+
+// A bumper plate seen face-on, coloured by plan
+function Disc({ type, size = 32 }) {
+  return (
+    <svg
+      className={`disc tone-${toneFor(type)}`}
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+    >
+      <circle cx="16" cy="16" r="15.5" className="disc-face" />
+      <circle cx="16" cy="16" r="11" className="disc-ring" />
+      <circle cx="16" cy="16" r="3.6" className="disc-hub" />
+    </svg>
+  );
+}
+
+function Sheet({ title, onClose, children, footer }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div
+        className="sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h2>{title}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="sheet-body">{children}</div>
+        {footer && <div className="sheet-foot">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmSheet({ title, body, confirmLabel, cancelLabel, onConfirm, onClose }) {
+  return (
+    <Sheet
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>
+            {cancelLabel || "Cancel"}
+          </button>
+          <button className="btn btn-danger" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </>
+      }
+    >
+      <p className="hint">{body}</p>
+    </Sheet>
+  );
+}
 
 export default function GymTracker() {
-  const [screen, setScreen] = useState("home");
-  const [workouts, setWorkouts] = useState([]);
-  const [activeWorkout, setActiveWorkout] = useState(null);
-  const [showExerciseModal, setShowExerciseModal] = useState(false);
-  const [newExerciseName, setNewExerciseName] = useState("");
+  const [activeWorkout, setActiveWorkout] = useState(() => loadStored("activeWorkout", null));
+  const [screen, setScreen] = useState(() => (activeWorkout ? "workout" : "home"));
+  const [workouts, setWorkouts] = useState(() => loadStored("gymWorkouts", []));
+  const [addDrafts, setAddDrafts] = useState({ push: "", pull: "" });
   const [exerciseToDelete, setExerciseToDelete] = useState(null);
-  const [editingType, setEditingType] = useState(null);
+  const [workoutToDelete, setWorkoutToDelete] = useState(null);
+  const [planToDelete, setPlanToDelete] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
@@ -28,44 +200,15 @@ export default function GymTracker() {
   const [customName, setCustomName] = useState("");
   const [customExercises, setCustomExercises] = useState([]);
   const [customExerciseInput, setCustomExerciseInput] = useState("");
+  const [customError, setCustomError] = useState("");
   const [editingCustom, setEditingCustom] = useState(null);
   const [addExerciseAt, setAddExerciseAt] = useState(null);
   const [addExerciseSearch, setAddExerciseSearch] = useState("");
   const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
-  const [customPlans, setCustomPlans] = useState([]);
+  const [customPlans, setCustomPlans] = useState(() => loadStored("gymCustomPlans", []));
+  const [monthOffset, setMonthOffset] = useState(0);
 
-  const [exercises, setExercises] = useState({
-    pull: [
-      "Lat Pulldowns",
-      "T-Bar Row",
-      "Row",
-      "Assisted Pull Ups",
-      "Pec Rear Delts",
-      "Bicep Curls",
-      "Preacher Curls",
-    ],
-    push: [
-      "Smith Machine",
-      "Chest Press Machine",
-      "Cable Chest Exercise",
-      "Chest Press (Hands Touch)",
-      "Flys",
-      "Lat Raises",
-      "Shoulder Press",
-      "Barbell Skull Crushers",
-      "Tricep Extensions",
-      "Seatbelts",
-    ],
-  });
-
-  useEffect(() => {
-    const sw = localStorage.getItem("gymWorkouts");
-    const se = localStorage.getItem("gymExercises");
-    const sc = localStorage.getItem("gymCustomPlans");
-    if (sw) setWorkouts(JSON.parse(sw));
-    if (se) setExercises(JSON.parse(se));
-    if (sc) setCustomPlans(JSON.parse(sc));
-  }, []);
+  const [exercises, setExercises] = useState(() => loadStored("gymExercises", DEFAULT_EXERCISES));
 
   useEffect(() => {
     if (workouts.length > 0)
@@ -88,14 +231,9 @@ export default function GymTracker() {
     }
   }, [activeWorkout]);
 
-  // Restore active workout on load
   useEffect(() => {
-    const savedActive = localStorage.getItem("activeWorkout");
-    if (savedActive) {
-      setActiveWorkout(JSON.parse(savedActive));
-      setScreen("workout");
-    }
-  }, []);
+    window.scrollTo(0, 0);
+  }, [screen]);
 
   const getAllKnownExercises = () => {
     const fromPlans = [...exercises.push, ...exercises.pull];
@@ -140,23 +278,16 @@ export default function GymTracker() {
       lastSession.sets.reduce((s, r) => s + (r.reps || 0), 0) /
       lastSession.sets.length;
     const lastWeight = lastSession.sets[0]?.weight || 0;
+    const reps = Math.round(avgReps);
     if (avgReps >= 10)
-      return {
-        msg: `${Math.round(avgReps)} reps — try ${lastWeight + 2.5}kg`,
-        color: "text-emerald-400",
-      };
+      return { tone: "up", lead: `Averaged ${reps} reps.`, action: `Try ${lastWeight + 2.5} kg` };
     if (avgReps <= 6)
       return {
-        msg: `${Math.round(avgReps)} reps — drop to ${Math.max(
-          0,
-          lastWeight - 2.5
-        )}kg`,
-        color: "text-rose-400",
+        tone: "down",
+        lead: `Averaged ${reps} reps.`,
+        action: `Drop to ${Math.max(0, lastWeight - 2.5)} kg`,
       };
-    return {
-      msg: `${Math.round(avgReps)} reps — push for ${Math.round(avgReps) + 2}`,
-      color: "text-amber-400",
-    };
+    return { tone: "hold", lead: `Averaged ${reps} reps.`, action: `Push for ${reps + 2}` };
   };
 
   const handleWorkoutStart = (type) => {
@@ -253,6 +384,12 @@ export default function GymTracker() {
     }));
   };
 
+  const openExercisePicker = (at) => {
+    setAddExerciseAt(at);
+    setAddExerciseSearch("");
+    setShowAddExerciseModal(true);
+  };
+
   const insertExercise = (name) => {
     const entry = buildExerciseEntry(name, activeWorkout?.type);
     setActiveWorkout((aw) => {
@@ -282,19 +419,19 @@ export default function GymTracker() {
     setShowCancelModal(false);
     setScreen("home");
   };
-  const deleteWorkout = (id) =>
-    setWorkouts(workouts.filter((w) => w.id !== id));
+
+  const deleteWorkout = (id) => {
+    const updated = workouts.filter((w) => w.id !== id);
+    setWorkouts(updated);
+    localStorage.setItem("gymWorkouts", JSON.stringify(updated));
+    setWorkoutToDelete(null);
+  };
 
   const addExerciseToList = (type) => {
-    if (newExerciseName.trim()) {
-      setExercises({
-        ...exercises,
-        [type]: [...exercises[type], newExerciseName.trim()],
-      });
-      setNewExerciseName("");
-      setShowExerciseModal(false);
-      setEditingType(null);
-    }
+    const name = addDrafts[type].trim();
+    if (!name) return;
+    setExercises({ ...exercises, [type]: [...exercises[type], name] });
+    setAddDrafts({ ...addDrafts, [type]: "" });
   };
 
   const deleteExercise = (type, name) => {
@@ -305,13 +442,36 @@ export default function GymTracker() {
     setExerciseToDelete(null);
   };
 
+  const openCustomModal = (idx = null) => {
+    setEditingCustom(idx);
+    setCustomName(idx !== null ? customPlans[idx].name : "");
+    setCustomExercises(idx !== null ? [...customPlans[idx].exercises] : []);
+    setCustomExerciseInput("");
+    setCustomError("");
+    setShowCustomModal(true);
+  };
+
+  const closeCustomModal = () => {
+    setShowCustomModal(false);
+    setEditingCustom(null);
+  };
+
+  const addCustomExercise = () => {
+    if (!customExerciseInput.trim()) return;
+    setCustomExercises([...customExercises, customExerciseInput.trim()]);
+    setCustomExerciseInput("");
+    setCustomError("");
+  };
+
   const saveCustomPlan = () => {
-    if (!customName.trim() || !customExercises.length) return;
+    if (!customName.trim()) return setCustomError("Give the plan a name.");
+    if (!customExercises.length)
+      return setCustomError("Add at least one exercise.");
     if (editingCustom !== null) {
       const u = [...customPlans];
       u[editingCustom] = {
         ...u[editingCustom],
-        name: customName,
+        name: customName.trim(),
         exercises: customExercises,
       };
       setCustomPlans(u);
@@ -320,7 +480,7 @@ export default function GymTracker() {
         ...customPlans,
         {
           id: `custom_${Date.now()}`,
-          name: customName,
+          name: customName.trim(),
           exercises: customExercises,
         },
       ]);
@@ -328,25 +488,12 @@ export default function GymTracker() {
     setCustomName("");
     setCustomExercises([]);
     setCustomExerciseInput("");
-    setShowCustomModal(false);
-    setEditingCustom(null);
+    closeCustomModal();
   };
 
-  const deleteCustomPlan = (id) =>
+  const deleteCustomPlan = (id) => {
     setCustomPlans(customPlans.filter((p) => p.id !== id));
-
-  const editCustomPlan = (idx) => {
-    setEditingCustom(idx);
-    setCustomName(customPlans[idx].name);
-    setCustomExercises([...customPlans[idx].exercises]);
-    setShowCustomModal(true);
-  };
-
-  const getColor = (cur, last) => {
-    if (last == null) return "#52525b";
-    const c = parseFloat(cur) || 0,
-      l = parseFloat(last) || 0;
-    return c > l ? "#10b981" : c < l ? "#ef4444" : "#52525b";
+    setPlanToDelete(null);
   };
 
   const getWorkoutLabel = (type) => {
@@ -355,21 +502,21 @@ export default function GymTracker() {
     return customPlans.find((p) => p.id === type)?.name || "Custom";
   };
 
-  const getWorkoutColor = (type) => {
-    if (type === "push")
-      return "bg-rose-500/10 border-rose-500/20 text-rose-400";
-    if (type === "pull")
-      return "bg-blue-500/10 border-blue-500/20 text-blue-400";
-    return "bg-purple-500/10 border-purple-500/20 text-purple-400";
+  const getLastDone = (type) => {
+    const last = workouts
+      .filter((w) => w.type === type)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    return last ? relativeDay(last.date) : null;
   };
 
   const getCalendarData = () => {
-    const today = new Date();
-    const cm = today.getMonth(),
-      cy = today.getFullYear();
-    const firstDay = new Date(cy, cm, 1);
+    const base = new Date();
+    const view = new Date(base.getFullYear(), base.getMonth() + monthOffset, 1);
+    const cm = view.getMonth(),
+      cy = view.getFullYear();
     const daysInMonth = new Date(cy, cm + 1, 0).getDate();
-    const startDow = firstDay.getDay();
+    // Weeks start on Monday
+    const startDow = (view.getDay() + 6) % 7;
     const wDates = workouts.reduce((acc, w) => {
       const d = new Date(w.date).toDateString();
       if (!acc[d]) acc[d] = [];
@@ -383,999 +530,913 @@ export default function GymTracker() {
     const ago = new Date();
     ago.setDate(ago.getDate() - 28);
     const last4 = workouts.filter((w) => new Date(w.date) >= ago);
-    return {
-      push: last4.filter((w) => w.type === "push").length,
-      pull: last4.filter((w) => w.type === "pull").length,
-      total: last4.length,
-    };
+    const push = last4.filter((w) => w.type === "push").length;
+    const pull = last4.filter((w) => w.type === "pull").length;
+    return { push, pull, custom: last4.length - push - pull, total: last4.length };
+  };
+
+  const getWeeks = (n = 8) => {
+    const monday = startOfDay(new Date());
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return Array.from({ length: n }, (_, i) => {
+      const start = new Date(monday);
+      start.setDate(start.getDate() - (n - 1 - i) * 7);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
+      const ws = workouts.filter((w) => {
+        const d = new Date(w.date);
+        return d >= start && d < end;
+      });
+      const push = ws.filter((w) => w.type === "push").length;
+      const pull = ws.filter((w) => w.type === "pull").length;
+      return { start, push, pull, custom: ws.length - push - pull, total: ws.length };
+    });
   };
 
   const filteredKnown = getAllKnownExercises().filter((e) =>
     e.toLowerCase().includes(addExerciseSearch.toLowerCase())
   );
 
+  const plans = [
+    { id: "push", name: "Push", sub: "Chest, shoulders, triceps", exercises: exercises.push },
+    { id: "pull", name: "Pull", sub: "Back, biceps", exercises: exercises.pull },
+    ...customPlans.map((p) => ({ id: p.id, name: p.name, sub: null, exercises: p.exercises })),
+  ];
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
-      {/* Header */}
-      <div className="bg-zinc-900/80 backdrop-blur border-b border-zinc-800 sticky top-0 z-50">
-        <div className="max-w-3xl mx-auto px-5 py-4 flex items-center justify-between">
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar-inner">
           {screen === "workout" ? (
-            <button
-              onClick={() => setShowCancelModal(true)}
-              className="text-zinc-400 hover:text-white transition"
-            >
-              <ArrowLeft size={22} />
-            </button>
+            <>
+              <button
+                className="icon-btn"
+                onClick={() => setShowCancelModal(true)}
+                aria-label="Leave workout"
+              >
+                <ArrowLeft size={22} />
+              </button>
+              {activeWorkout && (
+                <div className="workout-title">
+                  <Disc type={activeWorkout.type} size={24} />
+                  <span>{getWorkoutLabel(activeWorkout.type)}</span>
+                </div>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={finishWorkout}>
+                Finish
+              </button>
+            </>
           ) : (
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
-              <Dumbbell size={20} />
-            </div>
+            <>
+              <div className="brand">
+                <Disc type="push" size={22} />
+                Gym Tracker
+              </div>
+              <nav className="tabs" aria-label="Main">
+                {TABS.map(([s, label, Icon]) => (
+                  <button
+                    key={s}
+                    className="tab"
+                    onClick={() => setScreen(s)}
+                    aria-current={screen === s ? "page" : undefined}
+                  >
+                    <Icon size={20} aria-hidden="true" />
+                    {label}
+                  </button>
+                ))}
+              </nav>
+            </>
           )}
-          <h1 className="text-lg font-semibold">Gym Tracker</h1>
-          <div className="w-10" />
         </div>
-      </div>
+      </header>
 
-      {/* Nav */}
-      {screen !== "workout" && (
-        <div className="bg-zinc-900/50 border-b border-zinc-800/50 sticky top-[65px] z-40">
-          <div className="max-w-3xl mx-auto px-5 flex gap-6">
-            {[
-              ["home", "Workouts"],
-              ["calendar", "Calendar"],
-              ["insights", "Stats"],
-              ["history", "History"],
-              ["manage", "Settings"],
-            ].map(([s, label]) => (
-              <button
-                key={s}
-                onClick={() => setScreen(s)}
-                className={`py-3 text-sm font-medium border-b-2 transition ${
-                  screen === s
-                    ? "border-cyan-500 text-cyan-400"
-                    : "border-transparent text-zinc-500 hover:text-zinc-300"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="max-w-3xl mx-auto px-5 py-6">
+      <main className="page">
         {screen === "home" && (
-          <div>
-            {customPlans.map((plan) => (
-              <button
-                key={plan.id}
-                onClick={() => handleWorkoutStart(plan.id)}
-                className="w-full mb-3 text-left"
-              >
-                <div className="bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-2xl p-6 transition">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="text-lg font-semibold text-purple-400 mb-0.5">
-                        {plan.name}
-                      </div>
-                      <div className="text-sm text-zinc-400">
+          <>
+            <div className="page-head">
+              <div>
+                <h1 className="page-title">Train</h1>
+                <p className="page-meta">
+                  {new Date().toLocaleDateString(undefined, {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  })}
+                </p>
+              </div>
+            </div>
+
+            {workouts.length === 0 && (
+              <p className="hint" style={{ marginBottom: 14 }}>
+                Pick a plan to log your first session. Next time, your weights
+                fill in from the last one.
+              </p>
+            )}
+
+            <div className="list">
+              {plans.map((plan) => {
+                const lastDone = getLastDone(plan.id);
+                return (
+                  <button
+                    key={plan.id}
+                    className="row"
+                    onClick={() => handleWorkoutStart(plan.id)}
+                  >
+                    <Disc type={plan.id} />
+                    <div className="row-main">
+                      <div className="row-title">{plan.name}</div>
+                      {plan.sub && <div className="row-sub">{plan.sub}</div>}
+                      <div className="row-sub row-sub-quiet">
                         {plan.exercises.length} exercises
+                        {lastDone ? ` · ${lastDone}` : ""}
                       </div>
                     </div>
-                    <ArrowLeft
-                      className="rotate-180 text-purple-500"
-                      size={20}
-                    />
-                  </div>
-                </div>
+                    <ChevronRight className="row-chevron" size={18} aria-hidden="true" />
+                  </button>
+                );
+              })}
+              <button className="row row-new" onClick={() => openCustomModal()}>
+                <span className="new-icon">
+                  <Plus size={16} aria-hidden="true" />
+                </span>
+                New plan
               </button>
-            ))}
-
-            <button
-              onClick={() => handleWorkoutStart("push")}
-              className="w-full mb-3 text-left"
-            >
-              <div className="bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-2xl p-6 transition">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-lg font-semibold text-rose-400 mb-0.5">
-                      Push
-                    </div>
-                    <div className="text-sm text-zinc-400">
-                      Chest, Shoulders, Triceps • {exercises.push.length}{" "}
-                      exercises
-                    </div>
-                  </div>
-                  <ArrowLeft className="rotate-180 text-rose-500" size={20} />
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => handleWorkoutStart("pull")}
-              className="w-full mb-3 text-left"
-            >
-              <div className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-2xl p-6 transition">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="text-lg font-semibold text-blue-400 mb-0.5">
-                      Pull
-                    </div>
-                    <div className="text-sm text-zinc-400">
-                      Back, Biceps • {exercises.pull.length} exercises
-                    </div>
-                  </div>
-                  <ArrowLeft className="rotate-180 text-blue-500" size={20} />
-                </div>
-              </div>
-            </button>
-
-            <button
-              onClick={() => {
-                setEditingCustom(null);
-                setCustomName("");
-                setCustomExercises([]);
-                setShowCustomModal(true);
-              }}
-              className="w-full mb-6"
-            >
-              <div className="bg-zinc-900/50 hover:bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl p-6 transition">
-                <div className="text-center text-sm font-medium text-zinc-500">
-                  + Create Custom Workout
-                </div>
-              </div>
-            </button>
+            </div>
 
             {workouts.length > 0 && (
-              <div>
-                <h3 className="text-xs uppercase tracking-wider text-zinc-500 font-semibold mb-3">
-                  Recent
-                </h3>
-                <div className="space-y-2">
+              <section className="section">
+                <div className="section-head">
+                  <h2 className="section-title">Recent</h2>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setScreen("history")}>
+                    All history
+                  </button>
+                </div>
+                <div className="list">
                   {workouts.slice(0, 5).map((w) => (
-                    <div
-                      key={w.id}
-                      className={`border rounded-xl p-4 ${getWorkoutColor(
-                        w.type
-                      )}`}
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div className="text-sm font-medium">
-                            {getWorkoutLabel(w.type)}
-                          </div>
-                          <div className="text-xs text-zinc-500 mt-0.5">
-                            {new Date(w.date).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </div>
-                        </div>
-                        <div className="text-xs text-zinc-500">
-                          {w.exercises.length} exercises
+                    <div key={w.id} className="row">
+                      <Disc type={w.type} size={24} />
+                      <div className="row-main">
+                        <div className="row-title">{getWorkoutLabel(w.type)}</div>
+                        <div className="row-sub">
+                          {w.exercises.length} exercises ·{" "}
+                          {w.exercises.reduce((n, e) => n + e.sets.length, 0)} sets
                         </div>
                       </div>
+                      <div className="row-aside">{relativeDay(w.date)}</div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
-          </div>
+          </>
         )}
 
         {screen === "calendar" &&
           (() => {
             const { daysInMonth, startDow, wDates, cm, cy } = getCalendarData();
-            const months = [
-              "January",
-              "February",
-              "March",
-              "April",
-              "May",
-              "June",
-              "July",
-              "August",
-              "September",
-              "October",
-              "November",
-              "December",
-            ];
+            const monthCount = workouts.filter((w) => {
+              const d = new Date(w.date);
+              return d.getMonth() === cm && d.getFullYear() === cy;
+            }).length;
             return (
-              <div>
-                <h2 className="text-2xl font-semibold mb-6">
-                  <Calendar size={24} className="inline mr-2 mb-1" />
-                  {months[cm]} {cy}
-                </h2>
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5">
-                  <div className="grid grid-cols-7 gap-2 mb-3">
-                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                      (d) => (
-                        <div
-                          key={d}
-                          className="text-center text-xs font-medium text-zinc-500 py-2"
-                        >
-                          {d}
-                        </div>
-                      )
-                    )}
+              <>
+                <div className="page-head">
+                  <div>
+                    <h1 className="page-title">
+                      {MONTHS[cm]} {cy !== new Date().getFullYear() ? cy : ""}
+                    </h1>
+                    <p className="page-meta">
+                      {monthCount} {monthCount === 1 ? "workout" : "workouts"}
+                    </p>
                   </div>
-                  <div className="grid grid-cols-7 gap-2">
+                  <div className="month-nav">
+                    <button
+                      className="icon-btn"
+                      onClick={() => setMonthOffset(monthOffset - 1)}
+                      aria-label="Previous month"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      onClick={() => setMonthOffset(monthOffset + 1)}
+                      aria-label="Next month"
+                      disabled={monthOffset >= 0}
+                      style={monthOffset >= 0 ? { opacity: 0.35, cursor: "default" } : undefined}
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  </div>
+                </div>
+                <div className="cal">
+                  <div className="cal-grid">
+                    {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                      <div key={d} className="cal-dow">
+                        {d}
+                      </div>
+                    ))}
                     {Array.from({ length: startDow }).map((_, i) => (
-                      <div key={`e${i}`} className="aspect-square" />
+                      <div key={`e${i}`} />
                     ))}
                     {Array.from({ length: daysInMonth }).map((_, i) => {
                       const day = i + 1;
                       const ds = new Date(cy, cm, day).toDateString();
                       const dw = wDates[ds] || [];
                       const isToday = ds === new Date().toDateString();
+                      const tones = [...new Set(dw.map(toneFor))];
                       return (
                         <div
                           key={day}
-                          className={`aspect-square flex flex-col items-center justify-center rounded-xl border transition ${
-                            isToday
-                              ? "border-cyan-500 bg-cyan-500/10"
-                              : dw.length
-                              ? "border-zinc-700 bg-zinc-800/50"
-                              : "border-zinc-800/50"
-                          }`}
+                          className={`day${dw.length ? " has" : ""}${isToday ? " today" : ""}`}
                         >
-                          <span className="text-sm font-medium">{day}</span>
-                          {dw.length > 0 && (
-                            <div className="flex gap-0.5 mt-1">
-                              {dw.includes("push") && (
-                                <div className="w-1 h-1 rounded-full bg-rose-500" />
-                              )}
-                              {dw.includes("pull") && (
-                                <div className="w-1 h-1 rounded-full bg-blue-500" />
-                              )}
-                              {dw.some((t) => t !== "push" && t !== "pull") && (
-                                <div className="w-1 h-1 rounded-full bg-purple-500" />
-                              )}
-                            </div>
-                          )}
+                          {day}
+                          <div className="day-dots">
+                            {tones.map((t) => (
+                              <span key={t} className={`dot tone-${t}`} />
+                            ))}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
-                <div className="mt-5 flex gap-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-rose-500" />
-                    <span className="text-zinc-500">Push</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-blue-500" />
-                    <span className="text-zinc-500">Pull</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    <span className="text-zinc-500">Custom</span>
-                  </div>
+                <div className="legend">
+                  <span>
+                    <span className="dot tone-push" /> Push
+                  </span>
+                  <span>
+                    <span className="dot tone-pull" /> Pull
+                  </span>
+                  <span>
+                    <span className="dot tone-custom" /> Custom
+                  </span>
                 </div>
-                <div className="mt-5 bg-zinc-900/50 border border-zinc-800 rounded-xl p-5">
-                  <div className="text-sm text-zinc-500 mb-1">This Month</div>
-                  <div className="text-3xl font-bold text-cyan-400">
-                    {
-                      workouts.filter((w) => {
-                        const d = new Date(w.date);
-                        return d.getMonth() === cm && d.getFullYear() === cy;
-                      }).length
-                    }
-                  </div>
-                  <div className="text-sm text-zinc-500 mt-1">
-                    workouts completed
-                  </div>
-                </div>
-              </div>
+              </>
             );
           })()}
 
         {screen === "insights" &&
           (() => {
-            const { push, pull, total } = getInsights();
+            const { push, pull, custom, total } = getInsights();
+            const weeks = getWeeks();
+            const peak = Math.max(3, ...weeks.map((w) => w.total));
             return (
-              <div>
-                <h2 className="text-2xl font-semibold mb-6">Training Stats</h2>
-                <div className="grid grid-cols-2 gap-4 mb-5">
-                  <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5">
-                    <div className="text-xs text-zinc-500 mb-1">
-                      Last 4 Weeks
-                    </div>
-                    <div className="text-3xl font-bold text-cyan-400">
-                      {total}
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-1">workouts</div>
-                  </div>
-                  <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5">
-                    <div className="text-xs text-zinc-500 mb-1">Weekly Avg</div>
-                    <div className="text-3xl font-bold text-emerald-400">
-                      {total > 0 ? (total / 4).toFixed(1) : 0}
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-1">per week</div>
-                  </div>
+              <>
+                <div className="page-head">
+                  <h1 className="page-title">Stats</h1>
                 </div>
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5 mb-5">
-                  <h3 className="text-sm font-medium mb-4">Workout Split</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex justify-between mb-2 text-sm">
-                        <span className="text-rose-400">Push Days</span>
-                        <span className="font-medium">{push}</span>
+
+                {workouts.length === 0 ? (
+                  <div className="empty">
+                    <h2>Nothing to chart yet</h2>
+                    <p>Log a few sessions and your weekly training shows up here.</p>
+                    <button className="btn btn-primary" onClick={() => setScreen("home")}>
+                      Start a workout
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="panel">
+                      <p className="summary">
+                        <strong>{total}</strong> {total === 1 ? "workout" : "workouts"} in
+                        the last 4 weeks, about{" "}
+                        <strong>{(total / 4).toFixed(1)}</strong> a week.
+                      </p>
+                      {total > 0 && (
+                        <>
+                          <div className="split-bar" aria-hidden="true">
+                            {push > 0 && <span className="tone-push" style={{ flex: push }} />}
+                            {pull > 0 && <span className="tone-pull" style={{ flex: pull }} />}
+                            {custom > 0 && (
+                              <span className="tone-custom" style={{ flex: custom }} />
+                            )}
+                          </div>
+                          <div className="legend" style={{ marginTop: 8 }}>
+                            <span>
+                              <span className="dot tone-push" /> Push {push}
+                            </span>
+                            <span>
+                              <span className="dot tone-pull" /> Pull {pull}
+                            </span>
+                            {custom > 0 && (
+                              <span>
+                                <span className="dot tone-custom" /> Custom {custom}
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <section className="section">
+                      <div className="section-head">
+                        <h2 className="section-title">Last 8 weeks</h2>
                       </div>
-                      <div className="bg-zinc-800 rounded-full h-2">
+                      <div className="panel">
                         <div
-                          className="bg-rose-500 h-2 rounded-full transition-all"
-                          style={{
-                            width: `${total > 0 ? (push / total) * 100 : 0}%`,
-                          }}
-                        />
+                          className="weeks"
+                          role="img"
+                          aria-label={`Workouts per week: ${weeks
+                            .map((w) => w.total)
+                            .join(", ")}`}
+                        >
+                          {weeks.map((w, i) => (
+                            <div key={i} className="week">
+                              {w.total === 0 ? (
+                                <span className="week-empty" />
+                              ) : (
+                                [
+                                  ["push", w.push],
+                                  ["pull", w.pull],
+                                  ["custom", w.custom],
+                                ]
+                                  .filter(([, n]) => n > 0)
+                                  .map(([t, n]) => (
+                                    <span
+                                      key={t}
+                                      className={`week-seg tone-${t}`}
+                                      style={{ height: `${(n / peak) * 100}%` }}
+                                    />
+                                  ))
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="week-labels">
+                          {weeks.map((w, i) => (
+                            <span key={i} className={i === weeks.length - 1 ? "current" : ""}>
+                              {i === weeks.length - 1 ? "Now" : w.start.getDate()}
+                              <br />
+                              {(i === 0 ||
+                                w.start.getMonth() !== weeks[i - 1].start.getMonth()) &&
+                                MONTHS[w.start.getMonth()].slice(0, 3)}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-2 text-sm">
-                        <span className="text-blue-400">Pull Days</span>
-                        <span className="font-medium">{pull}</span>
-                      </div>
-                      <div className="bg-zinc-800 rounded-full h-2">
-                        <div
-                          className="bg-blue-500 h-2 rounded-full transition-all"
-                          style={{
-                            width: `${total > 0 ? (pull / total) * 100 : 0}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
+                    </section>
+                  </>
+                )}
+
+                <section className="section">
+                  <div className="section-head">
+                    <h2 className="section-title">Progression rules</h2>
                   </div>
-                </div>
-                <div className="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 rounded-2xl p-5">
-                  <h3 className="text-sm font-medium mb-3 flex items-center gap-2 text-cyan-400">
-                    <Zap size={16} /> Progressive Overload Tips
-                  </h3>
-                  <ul className="space-y-2 text-sm text-zinc-300">
-                    <li>
-                      • <strong>10-12 reps:</strong> Increase weight by 2.5-5kg
-                    </li>
-                    <li>
-                      • <strong>7-9 reps:</strong> Push for 1-2 more reps
-                    </li>
-                    <li>
-                      • <strong>6 or less:</strong> Drop weight by 2.5kg
-                    </li>
-                    <li>
-                      • <strong>Deload:</strong> Every 4-6 weeks, reduce 20%
-                    </li>
-                    <li>
-                      • <strong>Rest:</strong> 60-90s between sets
-                    </li>
-                  </ul>
-                </div>
-              </div>
+                  <div className="panel">
+                    <dl className="rules">
+                      <dt>10–12 reps</dt>
+                      <dd>Add 2.5–5 kg next session.</dd>
+                      <dt>7–9 reps</dt>
+                      <dd>Same weight, push for 1–2 more reps.</dd>
+                      <dt>6 or fewer</dt>
+                      <dd>Drop 2.5 kg and build back up.</dd>
+                      <dt>Deload</dt>
+                      <dd>Every 4–6 weeks, cut the weight by 20%.</dd>
+                      <dt>Rest</dt>
+                      <dd>60–90 seconds between sets.</dd>
+                    </dl>
+                  </div>
+                </section>
+              </>
             );
           })()}
 
         {screen === "history" && (
-          <div>
-            <h2 className="text-2xl font-semibold mb-6">Workout History</h2>
+          <>
+            <div className="page-head">
+              <div>
+                <h1 className="page-title">History</h1>
+                {workouts.length > 0 && (
+                  <p className="page-meta">
+                    {workouts.length} {workouts.length === 1 ? "session" : "sessions"}
+                  </p>
+                )}
+              </div>
+            </div>
             {workouts.length === 0 ? (
-              <div className="text-center py-20 text-zinc-600">
-                <TrendingUp size={48} className="mx-auto mb-4 opacity-50" />
-                <p>No workouts yet!</p>
+              <div className="empty">
+                <h2>No sessions yet</h2>
+                <p>Finished workouts land here with every set you logged.</p>
+                <button className="btn btn-primary" onClick={() => setScreen("home")}>
+                  Start a workout
+                </button>
               </div>
             ) : (
-              <div className="space-y-3">
-                {workouts.map((w) => (
-                  <div
-                    key={w.id}
-                    className={`border rounded-2xl p-5 ${getWorkoutColor(
-                      w.type
-                    )}`}
-                  >
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <div className="text-lg font-semibold">
-                          {getWorkoutLabel(w.type)}
-                        </div>
-                        <div className="text-xs text-zinc-500 mt-1">
-                          {new Date(w.date).toLocaleDateString("en-US", {
-                            weekday: "long",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </div>
+              workouts.map((w) => (
+                <article key={w.id} className="list session">
+                  <div className="session-head">
+                    <Disc type={w.type} size={28} />
+                    <div className="row-main">
+                      <div className="row-title">{getWorkoutLabel(w.type)}</div>
+                      <div className="row-sub">
+                        {new Date(w.date).toLocaleDateString(undefined, {
+                          weekday: "short",
+                          day: "numeric",
+                          month: "short",
+                        })}
+                        {" · "}
+                        {new Date(w.date).toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </div>
-                      <button
-                        onClick={() => deleteWorkout(w.id)}
-                        className="text-zinc-600 hover:text-rose-400 transition"
-                      >
-                        <Trash2 size={18} />
-                      </button>
                     </div>
-                    <div className="space-y-1.5">
-                      {w.exercises.map((ex, i) => (
-                        <div
-                          key={i}
-                          className="text-sm flex justify-between text-zinc-400"
-                        >
+                    <button
+                      className="icon-btn danger"
+                      onClick={() => setWorkoutToDelete(w)}
+                      aria-label={`Delete ${getWorkoutLabel(w.type)} workout`}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                  <div className="session-lines">
+                    {w.exercises.length === 0 && (
+                      <p className="hint">No exercises logged.</p>
+                    )}
+                    {w.exercises.map((ex, i) => {
+                      const top = ex.sets.reduce(
+                        (best, s) => ((s.weight || 0) > (best.weight || 0) ? s : best),
+                        ex.sets[0] || { weight: 0, reps: 0 }
+                      );
+                      return (
+                        <div key={i} className="session-line">
                           <span>{ex.name}</span>
                           <span>
-                            {ex.sets[0].weight}kg × {ex.sets[0].reps} (
-                            {ex.sets.length} sets)
+                            {top.weight} × {top.reps}
+                            <span style={{ color: "var(--text-3)" }}>
+                              {" "}· {ex.sets.length} {ex.sets.length === 1 ? "set" : "sets"}
+                            </span>
                           </span>
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
-                ))}
-              </div>
+                </article>
+              ))
             )}
-          </div>
+          </>
         )}
 
         {screen === "manage" && (
-          <div>
-            <h2 className="text-2xl font-semibold mb-6">Settings</h2>
-
-            {customPlans.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-zinc-400 mb-3">
-                  Custom Workouts
-                </h3>
-                <div className="space-y-2">
-                  {customPlans.map((plan, idx) => (
-                    <div
-                      key={plan.id}
-                      className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex justify-between items-center"
-                    >
-                      <div>
-                        <div className="text-sm font-medium">{plan.name}</div>
-                        <div className="text-xs text-zinc-500 mt-0.5">
-                          {plan.exercises.length} exercises
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => editCustomPlan(idx)}
-                          className="text-zinc-500 hover:text-cyan-400 transition"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button
-                          onClick={() => deleteCustomPlan(plan.id)}
-                          className="text-zinc-500 hover:text-rose-400 transition"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <>
+            <div className="page-head">
+              <h1 className="page-title">Plans</h1>
+            </div>
 
             {["push", "pull"].map((type) => (
-              <div key={type} className="mb-6">
-                <div className="flex justify-between items-center mb-3">
-                  <h3
-                    className={`text-sm font-medium ${
-                      type === "push" ? "text-rose-400" : "text-blue-400"
-                    }`}
-                  >
-                    {type === "push" ? "Push" : "Pull"} Day Exercises
-                  </h3>
-                  <button
-                    onClick={() => {
-                      setEditingType(type);
-                      setShowExerciseModal(true);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                      type === "push"
-                        ? "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
-                        : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-                    }`}
-                  >
-                    + Add
-                  </button>
+              <section key={type} className="section" style={type === "push" ? { marginTop: 0 } : undefined}>
+                <div className="section-head">
+                  <h2 className="section-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Disc type={type} size={20} />
+                    {type === "push" ? "Push" : "Pull"} exercises
+                  </h2>
                 </div>
-                <div className="space-y-2">
+                <div className="list">
                   {exercises[type].map((ex, i) => (
-                    <div
-                      key={i}
-                      className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 flex justify-between items-center"
-                    >
-                      <span className="text-sm">{ex}</span>
+                    <div key={i} className="row" style={{ padding: "6px 6px 6px 16px" }}>
+                      <div className="row-main">{ex}</div>
                       <button
+                        className="icon-btn danger"
                         onClick={() => setExerciseToDelete({ type, name: ex })}
-                        className="text-zinc-500 hover:text-rose-400 transition"
+                        aria-label={`Remove ${ex}`}
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={17} />
                       </button>
                     </div>
                   ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {screen === "workout" && activeWorkout && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-semibold">
-                {getWorkoutLabel(activeWorkout.type)}
-              </h2>
-              <button
-                onClick={finishWorkout}
-                className="px-6 py-2.5 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition shadow-lg shadow-cyan-500/20"
-              >
-                Finish
-              </button>
-            </div>
-
-            {activeWorkout.exercises.map((exercise, index) => {
-              const rec = getRecommendation(exercise.name, activeWorkout.type);
-              return (
-                <div key={exercise.id}>
-                  <button
-                    onClick={() => {
-                      setAddExerciseAt(index);
-                      setAddExerciseSearch("");
-                      setShowAddExerciseModal(true);
+                  <form
+                    className="inline-add"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      addExerciseToList(type);
                     }}
-                    className="w-full text-xs text-zinc-600 hover:text-cyan-400 py-2 transition"
                   >
-                    + insert exercise
-                  </button>
-
-                  <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-5 mb-3">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <div className="text-xs text-zinc-500 mb-1">
-                          #{index + 1}
-                        </div>
-                        <h3 className="text-lg font-medium">{exercise.name}</h3>
-                      </div>
-                      <button
-                        onClick={() => removeExercise(exercise.id)}
-                        className="text-zinc-600 hover:text-rose-400 transition"
-                      >
-                        <X size={18} />
-                      </button>
-                    </div>
-
-                    {rec && (
-                      <div className="mb-4 px-3 py-2 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                        <div className={`text-xs ${rec.color}`}>{rec.msg}</div>
-                      </div>
-                    )}
-
-                    <div className="space-y-3">
-                      {exercise.sets.map((set, idx) => (
-                        <div key={idx}>
-                          {exercise.lastSets?.[idx] && (
-                            <div className="text-xs text-cyan-400 mb-1.5 ml-2">
-                              Last: {exercise.lastSets[idx].weight}kg ×{" "}
-                              {exercise.lastSets[idx].reps}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-12 text-xs text-zinc-500 text-right shrink-0">
-                              S{idx + 1}
-                            </div>
-                            <input
-                              type="number"
-                              step="0.5"
-                              value={set.weight || ""}
-                              onChange={(e) =>
-                                updateSet(
-                                  exercise.id,
-                                  idx,
-                                  "weight",
-                                  e.target.value
-                                )
-                              }
-                              className="w-20 bg-zinc-900 border-2 rounded-lg px-2 py-2.5 text-center text-sm font-medium focus:outline-none focus:border-cyan-500 transition"
-                              placeholder="0"
-                              style={{
-                                borderColor: getColor(
-                                  set.weight,
-                                  exercise.lastSets?.[idx]?.weight
-                                ),
-                              }}
-                            />
-                            <span className="text-xs text-zinc-600 shrink-0">
-                              kg
-                            </span>
-                            <input
-                              type="number"
-                              value={set.reps || ""}
-                              onChange={(e) =>
-                                updateSet(
-                                  exercise.id,
-                                  idx,
-                                  "reps",
-                                  e.target.value
-                                )
-                              }
-                              className="w-16 bg-zinc-900 border-2 rounded-lg px-2 py-2.5 text-center text-sm font-medium focus:outline-none focus:border-cyan-500 transition"
-                              placeholder="0"
-                              style={{
-                                borderColor: getColor(
-                                  set.reps,
-                                  exercise.lastSets?.[idx]?.reps
-                                ),
-                              }}
-                            />
-                            <span className="text-xs text-zinc-600 shrink-0">
-                              rep
-                            </span>
-                            {exercise.sets.length > 1 && (
-                              <button
-                                onClick={() => removeSet(exercise.id, idx)}
-                                className="text-zinc-600 hover:text-rose-400 transition shrink-0"
-                              >
-                                <X size={16} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <button
-                      onClick={() => addSet(exercise.id)}
-                      className="w-full mt-3 py-2 text-xs text-zinc-500 hover:text-cyan-400 transition"
-                    >
-                      + add set
+                    <input
+                      className="field"
+                      value={addDrafts[type]}
+                      onChange={(e) => setAddDrafts({ ...addDrafts, [type]: e.target.value })}
+                      placeholder={type === "push" ? "Incline Dumbbell Press" : "Face Pulls"}
+                      aria-label={`New ${type} exercise`}
+                    />
+                    <button type="submit" className="btn btn-secondary">
+                      Add
                     </button>
-                  </div>
+                  </form>
                 </div>
-              );
-            })}
+              </section>
+            ))}
 
-            <button
-              onClick={() => {
-                setAddExerciseAt("end");
-                setAddExerciseSearch("");
-                setShowAddExerciseModal(true);
-              }}
-              className="w-full bg-zinc-900/50 border border-dashed border-zinc-700 rounded-2xl py-6 hover:border-cyan-500/50 hover:bg-zinc-900 transition"
-            >
-              <div className="text-sm text-zinc-500 hover:text-cyan-400">
-                + Add Exercise
+            <section className="section">
+              <div className="section-head">
+                <h2 className="section-title">Custom plans</h2>
               </div>
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Modals - keeping same as before */}
-      {showAddExerciseModal && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-4 z-50"
-          onClick={() => setShowAddExerciseModal(false)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md max-h-96 flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
-              <h3 className="text-lg font-medium">Add Exercise</h3>
-              <button
-                onClick={() => setShowAddExerciseModal(false)}
-                className="text-zinc-500 hover:text-white transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-4">
-              <input
-                type="text"
-                value={addExerciseSearch}
-                onChange={(e) => setAddExerciseSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500 transition"
-                autoFocus
-              />
-            </div>
-            <div className="overflow-y-auto flex-1 px-2 pb-2">
-              {addExerciseSearch.trim() &&
-                !filteredKnown.some(
-                  (e) => e.toLowerCase() === addExerciseSearch.toLowerCase()
-                ) && (
-                  <button
-                    onClick={() => insertExercise(addExerciseSearch.trim())}
-                    className="w-full text-left p-3 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 mb-2 text-sm font-medium transition"
-                  >
-                    + Add "{addExerciseSearch.trim()}"
-                  </button>
-                )}
-              {filteredKnown.map((ex, i) => (
-                <button
-                  key={i}
-                  onClick={() => insertExercise(ex)}
-                  className="w-full text-left p-3 rounded-lg hover:bg-zinc-800 text-sm transition"
-                >
-                  {ex}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showCancelModal && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
-          onClick={() => setShowCancelModal(false)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-medium mb-2">Cancel Workout?</h3>
-            <p className="text-sm text-zinc-400 mb-6">
-              Your progress won't be saved.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowCancelModal(false)}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Keep Going
-              </button>
-              <button
-                onClick={cancelWorkout}
-                className="flex-1 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showDatePicker && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
-          onClick={() => setShowDatePicker(false)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-medium mb-5">When did you work out?</h3>
-            <div className="space-y-4 mb-6">
-              <div>
-                <label className="text-xs text-zinc-500 block mb-1.5">
-                  Date
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500 transition"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-500 block mb-1.5">
-                  Time
-                </label>
-                <input
-                  type="time"
-                  value={selectedTime}
-                  onChange={(e) => setSelectedTime(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500 transition"
-                />
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowDatePicker(false)}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => startWorkout(pendingWorkoutType)}
-                className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Start
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showCustomModal && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-4 z-50"
-          onClick={() => setShowCustomModal(false)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full max-h-screen overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center mb-5">
-              <h3 className="text-lg font-medium">
-                {editingCustom !== null ? "Edit" : "Create"} Workout
-              </h3>
-              <button
-                onClick={() => setShowCustomModal(false)}
-                className="text-zinc-500 hover:text-white transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="mb-4">
-              <label className="text-xs text-zinc-500 block mb-1.5">Name</label>
-              <input
-                type="text"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                placeholder="Leg Day..."
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-cyan-500 transition"
-              />
-            </div>
-            <div className="mb-4">
-              <label className="text-xs text-zinc-500 block mb-1.5">
-                Exercises
-              </label>
-              <div className="space-y-2 mb-3">
-                {customExercises.map((ex, i) => (
-                  <div
-                    key={i}
-                    className="bg-zinc-800 rounded-lg px-3 py-2 flex justify-between items-center"
-                  >
-                    <span className="text-sm">{ex}</span>
+              <div className="list">
+                {customPlans.map((plan, idx) => (
+                  <div key={plan.id} className="row" style={{ padding: "8px 6px 8px 16px" }}>
+                    <Disc type={plan.id} size={24} />
+                    <div className="row-main">
+                      <div className="row-title">{plan.name}</div>
+                      <div className="row-sub">{plan.exercises.length} exercises</div>
+                    </div>
                     <button
-                      onClick={() =>
-                        setCustomExercises(
-                          customExercises.filter((_, idx) => idx !== i)
-                        )
-                      }
-                      className="text-zinc-500 hover:text-rose-400 transition"
+                      className="icon-btn"
+                      onClick={() => openCustomModal(idx)}
+                      aria-label={`Edit ${plan.name}`}
                     >
-                      <X size={16} />
+                      <Pencil size={17} />
+                    </button>
+                    <button
+                      className="icon-btn danger"
+                      onClick={() => setPlanToDelete(plan)}
+                      aria-label={`Delete ${plan.name}`}
+                    >
+                      <Trash2 size={17} />
                     </button>
                   </div>
                 ))}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={customExerciseInput}
-                  onChange={(e) => setCustomExerciseInput(e.target.value)}
-                  placeholder="Add..."
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-cyan-500 transition"
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter" && customExerciseInput.trim()) {
-                      setCustomExercises([
-                        ...customExercises,
-                        customExerciseInput.trim(),
-                      ]);
-                      setCustomExerciseInput("");
-                    }
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    if (customExerciseInput.trim()) {
-                      setCustomExercises([
-                        ...customExercises,
-                        customExerciseInput.trim(),
-                      ]);
-                      setCustomExerciseInput("");
-                    }
-                  }}
-                  className="w-10 h-10 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 rounded-lg flex items-center justify-center transition"
-                >
-                  <Plus size={18} />
+                <button className="row row-new" onClick={() => openCustomModal()}>
+                  <span className="new-icon">
+                    <Plus size={16} aria-hidden="true" />
+                  </span>
+                  New plan
                 </button>
               </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowCustomModal(false);
-                  setEditingCustom(null);
-                }}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Cancel
+            </section>
+          </>
+        )}
+
+        {screen === "workout" &&
+          activeWorkout &&
+          (() => {
+            let upCount = 0,
+              setCount = 0;
+            activeWorkout.exercises.forEach((ex) =>
+              ex.sets.forEach((s, i) => {
+                setCount++;
+                if (compareSet(s, ex.lastSets?.[i]) === "up") upCount++;
+              })
+            );
+            return (
+              <>
+                <div className="workout-meta">
+                  <span>
+                    {new Date(activeWorkout.date).toLocaleDateString(undefined, {
+                      weekday: "short",
+                      day: "numeric",
+                      month: "short",
+                    })}
+                    {", "}
+                    {new Date(activeWorkout.date).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <span>
+                    {activeWorkout.exercises.length} exercises · {setCount} sets
+                  </span>
+                  {upCount > 0 && (
+                    <span className="up-count">
+                      Up on {upCount} {upCount === 1 ? "set" : "sets"}
+                    </span>
+                  )}
+                </div>
+
+                {activeWorkout.exercises.length === 0 && (
+                  <div className="empty" style={{ marginTop: 12 }}>
+                    <h2>This workout is empty</h2>
+                    <p>Add an exercise to start logging sets.</p>
+                  </div>
+                )}
+
+                {activeWorkout.exercises.map((exercise, index) => {
+                  const rec = getRecommendation(exercise.name, activeWorkout.type);
+                  return (
+                    <div key={exercise.id}>
+                      <button
+                        className="insert"
+                        onClick={() => openExercisePicker(index)}
+                        aria-label={`Insert exercise before ${exercise.name}`}
+                      >
+                        <Plus size={14} aria-hidden="true" />
+                      </button>
+
+                      <section className="exercise" aria-label={exercise.name}>
+                        <div className="exercise-head">
+                          <h2 className="exercise-name">{exercise.name}</h2>
+                          <button
+                            className="icon-btn danger"
+                            onClick={() => removeExercise(exercise.id)}
+                            aria-label={`Remove ${exercise.name}`}
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+
+                        {rec && (
+                          <p className={`rec rec-${rec.tone}`}>
+                            {rec.lead} <strong>{rec.action}</strong>
+                          </p>
+                        )}
+
+                        <div className="sets">
+                          <div className="set-head" aria-hidden="true">
+                            <span />
+                            <span>Set</span>
+                            <span>Last</span>
+                            <span>kg</span>
+                            <span>Reps</span>
+                            <span />
+                          </div>
+                          {exercise.sets.map((set, idx) => {
+                            const last = exercise.lastSets?.[idx];
+                            const state = compareSet(set, last);
+                            return (
+                              <div key={idx} className="set-row">
+                                <span
+                                  key={state}
+                                  className="plate"
+                                  data-state={state}
+                                  title={STATE_LABEL[state]}
+                                >
+                                  <span className="sr-only">{STATE_LABEL[state]}</span>
+                                </span>
+                                <span className="set-no">{idx + 1}</span>
+                                <span className="set-last">
+                                  {last ? `${last.weight}×${last.reps}` : "–"}
+                                </span>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.5"
+                                  className="num-input"
+                                  value={set.weight || ""}
+                                  placeholder="0"
+                                  aria-label={`Set ${idx + 1} weight in kg`}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) =>
+                                    updateSet(exercise.id, idx, "weight", e.target.value)
+                                  }
+                                />
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  className="num-input"
+                                  value={set.reps || ""}
+                                  placeholder="0"
+                                  aria-label={`Set ${idx + 1} reps`}
+                                  onFocus={(e) => e.target.select()}
+                                  onChange={(e) =>
+                                    updateSet(exercise.id, idx, "reps", e.target.value)
+                                  }
+                                />
+                                {exercise.sets.length > 1 ? (
+                                  <button
+                                    className="icon-btn danger"
+                                    style={{ width: 32 }}
+                                    onClick={() => removeSet(exercise.id, idx)}
+                                    aria-label={`Remove set ${idx + 1}`}
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                ) : (
+                                  <span />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <button className="add-set" onClick={() => addSet(exercise.id)}>
+                          <Plus size={16} aria-hidden="true" />
+                          Add set
+                        </button>
+                      </section>
+                    </div>
+                  );
+                })}
+
+                <button className="add-exercise" onClick={() => openExercisePicker("end")}>
+                  <Plus size={18} aria-hidden="true" />
+                  Add exercise
+                </button>
+              </>
+            );
+          })()}
+      </main>
+
+      {showAddExerciseModal && (
+        <Sheet title="Add exercise" onClose={() => setShowAddExerciseModal(false)}>
+          <input
+            type="search"
+            className="field"
+            value={addExerciseSearch}
+            onChange={(e) => setAddExerciseSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && addExerciseSearch.trim())
+                insertExercise(filteredKnown[0] || addExerciseSearch.trim());
+            }}
+            placeholder="Search or type a new exercise"
+            aria-label="Search exercises"
+            autoFocus
+          />
+          <div className="pick-list" style={{ marginTop: 10 }}>
+            {addExerciseSearch.trim() &&
+              !filteredKnown.some(
+                (e) => e.toLowerCase() === addExerciseSearch.trim().toLowerCase()
+              ) && (
+                <button
+                  className="pick pick-new"
+                  onClick={() => insertExercise(addExerciseSearch.trim())}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  Add “{addExerciseSearch.trim()}”
+                </button>
+              )}
+            {filteredKnown.map((ex) => (
+              <button key={ex} className="pick" onClick={() => insertExercise(ex)}>
+                {ex}
               </button>
-              <button
-                onClick={saveCustomPlan}
-                className="flex-1 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Save
-              </button>
-            </div>
+            ))}
+            {!addExerciseSearch.trim() && filteredKnown.length === 0 && (
+              <p className="hint" style={{ padding: "8px 12px" }}>
+                Type an exercise name to add it.
+              </p>
+            )}
           </div>
-        </div>
+        </Sheet>
       )}
 
-      {showExerciseModal && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
-          onClick={() => setShowExerciseModal(false)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-medium">Add Exercise</h3>
-              <button
-                onClick={() => setShowExerciseModal(false)}
-                className="text-zinc-500 hover:text-white transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <input
-              type="text"
-              value={newExerciseName}
-              onChange={(e) => setNewExerciseName(e.target.value)}
-              placeholder="Exercise name"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 mb-5 text-sm focus:outline-none focus:border-cyan-500 transition"
-              onKeyPress={(e) =>
-                e.key === "Enter" && addExerciseToList(editingType)
-              }
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowExerciseModal(false);
-                  setNewExerciseName("");
-                }}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-lg text-sm font-medium transition"
-              >
+      {showCancelModal && (
+        <ConfirmSheet
+          title="Discard this workout?"
+          body="Nothing you've logged in this session will be saved."
+          cancelLabel="Keep training"
+          confirmLabel="Discard"
+          onConfirm={cancelWorkout}
+          onClose={() => setShowCancelModal(false)}
+        />
+      )}
+
+      {showDatePicker && (
+        <Sheet
+          title={`Start ${getWorkoutLabel(pendingWorkoutType)}`}
+          onClose={() => setShowDatePicker(false)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setShowDatePicker(false)}>
                 Cancel
               </button>
-              <button
-                onClick={() => addExerciseToList(editingType)}
-                className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Add
+              <button className="btn btn-primary" onClick={() => startWorkout(pendingWorkoutType)}>
+                Start workout
               </button>
+            </>
+          }
+        >
+          <div className="stack">
+            <p className="hint">Change the date and time if you're logging a past session.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
+              <div>
+                <label className="label" htmlFor="start-date">
+                  Date
+                </label>
+                <input
+                  id="start-date"
+                  type="date"
+                  className="field"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="start-time">
+                  Time
+                </label>
+                <input
+                  id="start-time"
+                  type="time"
+                  className="field"
+                  value={selectedTime}
+                  onChange={(e) => setSelectedTime(e.target.value)}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </Sheet>
+      )}
+
+      {showCustomModal && (
+        <Sheet
+          title={editingCustom !== null ? "Edit plan" : "New plan"}
+          onClose={closeCustomModal}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={closeCustomModal}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={saveCustomPlan}>
+                Save plan
+              </button>
+            </>
+          }
+        >
+          <div className="stack">
+            <div>
+              <label className="label" htmlFor="plan-name">
+                Name
+              </label>
+              <input
+                id="plan-name"
+                className="field"
+                value={customName}
+                onChange={(e) => {
+                  setCustomName(e.target.value);
+                  setCustomError("");
+                }}
+                placeholder="Leg day"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="plan-exercise">
+                Exercises
+              </label>
+              {customExercises.length > 0 && (
+                <div className="chip-list">
+                  {customExercises.map((ex, i) => (
+                    <div key={i} className="chip">
+                      <span className="num">{i + 1}</span>
+                      <span>{ex}</span>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() =>
+                          setCustomExercises(customExercises.filter((_, idx) => idx !== i))
+                        }
+                        aria-label={`Remove ${ex}`}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <form
+                style={{ display: "flex", gap: 8 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  addCustomExercise();
+                }}
+              >
+                <input
+                  id="plan-exercise"
+                  className="field"
+                  value={customExerciseInput}
+                  onChange={(e) => setCustomExerciseInput(e.target.value)}
+                  placeholder="Romanian Deadlift"
+                />
+                <button type="submit" className="btn btn-secondary" aria-label="Add exercise to plan">
+                  <Plus size={18} />
+                </button>
+              </form>
+              {customError && <p className="field-error">{customError}</p>}
+            </div>
+          </div>
+        </Sheet>
       )}
 
       {exerciseToDelete && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
-          onClick={() => setExerciseToDelete(null)}
-        >
-          <div
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-medium mb-2">Delete Exercise?</h3>
-            <p className="text-sm text-zinc-400 mb-6">
-              Remove "{exerciseToDelete.name}" from your list?
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setExerciseToDelete(null)}
-                className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() =>
-                  deleteExercise(exerciseToDelete.type, exerciseToDelete.name)
-                }
-                className="flex-1 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 py-2.5 rounded-lg text-sm font-medium transition"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmSheet
+          title="Remove exercise?"
+          body={`“${exerciseToDelete.name}” comes off your ${exerciseToDelete.type} plan. Past workouts keep it.`}
+          confirmLabel="Remove"
+          onConfirm={() => deleteExercise(exerciseToDelete.type, exerciseToDelete.name)}
+          onClose={() => setExerciseToDelete(null)}
+        />
+      )}
+
+      {planToDelete && (
+        <ConfirmSheet
+          title={`Delete ${planToDelete.name}?`}
+          body="The plan goes, but workouts you've already logged with it stay in your history."
+          confirmLabel="Delete plan"
+          onConfirm={() => deleteCustomPlan(planToDelete.id)}
+          onClose={() => setPlanToDelete(null)}
+        />
+      )}
+
+      {workoutToDelete && (
+        <ConfirmSheet
+          title="Delete this workout?"
+          body={`${getWorkoutLabel(workoutToDelete.type)} on ${new Date(
+            workoutToDelete.date
+          ).toLocaleDateString(undefined, {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          })} will be removed for good.`}
+          confirmLabel="Delete"
+          onConfirm={() => deleteWorkout(workoutToDelete.id)}
+          onClose={() => setWorkoutToDelete(null)}
+        />
       )}
     </div>
   );
