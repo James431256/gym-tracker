@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Dumbbell,
   CalendarDays,
@@ -15,8 +15,21 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowRight,
+  Check,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from "lucide-react";
 import "./App.css";
+import {
+  MUSCLES,
+  MUSCLE_TYPE_PREFIX,
+  getMuscle,
+  muscleFromType,
+  musclesFor,
+  exercisesForMuscle,
+} from "./muscles";
+import { useCloudSync } from "./sync";
 
 const loadSaved = (key, fallback) => {
   try {
@@ -196,8 +209,12 @@ const TABS = [
   ["manage", "Plans", ClipboardList],
 ];
 
-// Custom plans and old push/pull sessions share the white plate
-const toneFor = (type) => DAYS.find((d) => d.id === type)?.tone || "other";
+const DEFAULT_SETTINGS = { defaultSets: 2, weightJump: 2.5 };
+
+// Muscle workouts take their muscle's plate; custom plans and old push/pull
+// sessions share the white plate
+const toneFor = (type) =>
+  DAYS.find((d) => d.id === type)?.tone || muscleFromType(type)?.tone || "other";
 
 const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
 
@@ -230,6 +247,9 @@ const compareSet = (set, last) => {
   if (r !== lr) return r > lr ? "up" : "down";
   return "same";
 };
+
+// "20×10, 20×9"
+const formatSets = (sets) => sets.map((s) => `${s.weight}×${s.reps}`).join(", ");
 
 const STATE_LABEL = {
   todo: "Not logged yet",
@@ -359,10 +379,53 @@ export default function GymTracker() {
     migrateExercises(loadSaved("gymExercises", null))
   );
   const [settings, setSettings] = useState(() => ({
-    defaultSets: 2,
-    weightJump: 2.5,
+    ...DEFAULT_SETTINGS,
     ...loadSaved("gymSettings", {}),
   }));
+  // Exercises you've added to a muscle, by muscle id
+  const [muscleExercises, setMuscleExercises] = useState(() =>
+    loadSaved("gymMuscleExercises", {})
+  );
+  const [muscleId, setMuscleId] = useState(null);
+  const [muscleSelection, setMuscleSelection] = useState([]);
+  const [muscleDraft, setMuscleDraft] = useState("");
+  const [pendingList, setPendingList] = useState(null);
+  const [pickerMuscle, setPickerMuscle] = useState("all");
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [showSignOut, setShowSignOut] = useState(false);
+
+  // Plans and settings as they come back from the account
+  const applyPrefs = useCallback((remote) => {
+    const next = {
+      exercises: migrateExercises(remote.exercises || null),
+      customPlans: remote.customPlans || [],
+      settings: { ...DEFAULT_SETTINGS, ...(remote.settings || {}) },
+      muscleExercises: remote.muscleExercises || {},
+    };
+    setExercises(next.exercises);
+    setCustomPlans(next.customPlans);
+    setSettings(next.settings);
+    setMuscleExercises(next.muscleExercises);
+    return next;
+  }, []);
+
+  const clearLocal = useCallback(() => {
+    setWorkouts([]);
+    applyPrefs({});
+  }, [applyPrefs]);
+
+  const cloud = useCloudSync({
+    workouts,
+    setWorkouts,
+    prefs: { exercises, customPlans, settings, muscleExercises },
+    setPrefs: applyPrefs,
+    clearLocal,
+  });
 
   useEffect(() => {
     localStorage.setItem("gymWorkouts", JSON.stringify(workouts));
@@ -377,6 +440,9 @@ export default function GymTracker() {
   useEffect(() => {
     localStorage.setItem("gymSettings", JSON.stringify(settings));
   }, [settings]);
+  useEffect(() => {
+    localStorage.setItem("gymMuscleExercises", JSON.stringify(muscleExercises));
+  }, [muscleExercises]);
 
   // Save active workout to localStorage
   useEffect(() => {
@@ -389,13 +455,22 @@ export default function GymTracker() {
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [screen]);
+  }, [screen, muscleId]);
 
-  const getAllKnownExercises = () => {
+  // Exercises you've used yourself, in plans or in past workouts
+  const getYourExercises = () => {
     const fromPlans = Object.values(exercises).flat();
     const fromHistory = workouts.flatMap((w) => w.exercises.map((e) => e.name));
     const fromCustom = customPlans.flatMap((p) => p.exercises);
-    return [...new Set([...fromPlans, ...fromHistory, ...fromCustom])].sort();
+    return [...new Set([...fromPlans, ...fromHistory, ...fromCustom])];
+  };
+
+  const getAllKnownExercises = () => {
+    const fromMuscles = MUSCLES.flatMap((m) => [
+      ...m.exercises,
+      ...(muscleExercises[m.id] || []),
+    ]);
+    return [...new Set([...getYourExercises(), ...fromMuscles])].sort();
   };
 
   // Past sessions of an exercise on any day, newest first
@@ -409,8 +484,10 @@ export default function GymTracker() {
       }))
       .filter((h) => completedSets(h.sets).length);
 
-  const handleWorkoutStart = (type) => {
+  // A muscle workout passes the exercises picked for it
+  const handleWorkoutStart = (type, list = null) => {
     setPendingWorkoutType(type);
+    setPendingList(list);
     const now = new Date();
     setSelectedDate(now.toISOString().split("T")[0]);
     setSelectedTime(now.toTimeString().slice(0, 5));
@@ -443,6 +520,7 @@ export default function GymTracker() {
 
   const startWorkout = (type) => {
     const list =
+      pendingList ||
       exercises[type] ||
       customPlans.find((p) => p.id === type)?.exercises ||
       [];
@@ -458,6 +536,9 @@ export default function GymTracker() {
       exercises: workoutExercises,
     });
     setScreen("workout");
+    setPickerMuscle(muscleFromType(type)?.id || "all");
+    setPendingList(null);
+    setMuscleSelection([]);
     setShowDatePicker(false);
     setSelectedDate("");
     setSelectedTime("");
@@ -517,6 +598,17 @@ export default function GymTracker() {
 
   const insertExercise = (name) => {
     const entry = buildExerciseEntry(name);
+    // A new exercise typed while a muscle is picked joins that muscle
+    if (
+      pickerMuscle !== "all" &&
+      !exercisesForMuscle(pickerMuscle, muscleExercises, getYourExercises()).some(
+        (e) => e.toLowerCase() === name.toLowerCase()
+      )
+    )
+      setMuscleExercises({
+        ...muscleExercises,
+        [pickerMuscle]: [...(muscleExercises[pickerMuscle] || []), name],
+      });
     setActiveWorkout((aw) => {
       const exs = [...aw.exercises];
       if (addExerciseAt === "end") {
@@ -532,9 +624,15 @@ export default function GymTracker() {
   };
 
   const finishWorkout = () => {
-    setWorkouts([activeWorkout, ...workouts]);
+    // Advice and last-time figures are worked out fresh each session, so only keep the sets
+    const done = {
+      ...activeWorkout,
+      exercises: activeWorkout.exercises.map(({ id, name, sets }) => ({ id, name, sets })),
+    };
+    setWorkouts([done, ...workouts]);
+    cloud.saveWorkout(done);
     setActiveWorkout(null);
-    setScreen("home");
+    setScreen(muscleFromType(done.type) ? "muscle" : "home");
   };
 
   const cancelWorkout = () => {
@@ -545,7 +643,94 @@ export default function GymTracker() {
 
   const deleteWorkout = (id) => {
     setWorkouts(workouts.filter((w) => w.id !== id));
+    cloud.removeWorkout(id);
     setWorkoutToDelete(null);
+  };
+
+  const openMuscle = (id) => {
+    setMuscleId(id);
+    setMuscleSelection([]);
+    setMuscleDraft("");
+    setScreen("muscle");
+  };
+
+  const toggleMuscleExercise = (name) =>
+    setMuscleSelection((sel) =>
+      sel.includes(name) ? sel.filter((n) => n !== name) : [...sel, name]
+    );
+
+  const addMuscleExercise = () => {
+    const name = muscleDraft.trim();
+    if (!name) return;
+    const list = exercisesForMuscle(muscleId, muscleExercises, getYourExercises());
+    const existing = list.find((e) => e.toLowerCase() === name.toLowerCase());
+    if (!existing)
+      setMuscleExercises({
+        ...muscleExercises,
+        [muscleId]: [...(muscleExercises[muscleId] || []), name],
+      });
+    setMuscleSelection((sel) => (sel.includes(existing || name) ? sel : [...sel, existing || name]));
+    setMuscleDraft("");
+  };
+
+  const removeMuscleExercise = (id, name) => {
+    setMuscleExercises({
+      ...muscleExercises,
+      [id]: (muscleExercises[id] || []).filter((e) => e !== name),
+    });
+    setMuscleSelection((sel) => sel.filter((n) => n !== name));
+  };
+
+  // Completed sets per muscle since a date, and when each was last trained
+  const getMuscleStats = (since) => {
+    const stats = Object.fromEntries(
+      MUSCLES.map((m) => [m.id, { sets: 0, sessions: 0, last: null }])
+    );
+    workouts.forEach((w) => {
+      const hit = new Set();
+      w.exercises.forEach((ex) => {
+        const n = completedSets(ex.sets).length;
+        if (!n) return;
+        musclesFor(ex.name, muscleExercises).forEach((id) => {
+          if (!stats[id]) return;
+          if (!stats[id].last || new Date(w.date) > new Date(stats[id].last))
+            stats[id].last = w.date;
+          if (new Date(w.date) >= since) {
+            stats[id].sets += n;
+            hit.add(id);
+          }
+        });
+      });
+      hit.forEach((id) => stats[id].sessions++);
+    });
+    return stats;
+  };
+
+  const submitAuth = async (e) => {
+    e.preventDefault();
+    const email = authEmail.trim();
+    if (!email || !authPassword)
+      return setAuthMessage({ error: "Enter your email and a password." });
+    setAuthBusy(true);
+    setAuthMessage(null);
+    if (authMode === "signin") {
+      const error = await cloud.signIn(email, authPassword);
+      if (error) setAuthMessage({ error });
+      else closeAuth();
+    } else {
+      const result = await cloud.signUp(email, authPassword);
+      if (result.error || result.notice) {
+        setAuthMessage(result);
+        if (result.notice) setAuthMode("signin");
+      } else closeAuth();
+    }
+    setAuthBusy(false);
+  };
+
+  const closeAuth = () => {
+    setShowAuth(false);
+    setAuthPassword("");
+    setAuthMessage(null);
   };
 
   const addExerciseToList = (type) => {
@@ -621,6 +806,7 @@ export default function GymTracker() {
 
   const getWorkoutLabel = (type) => {
     if (getDay(type)) return getDay(type).name;
+    if (muscleFromType(type)) return muscleFromType(type).name;
     if (type === "push") return "Push";
     if (type === "pull") return "Pull";
     return customPlans.find((p) => p.id === type)?.name || "Custom";
@@ -653,7 +839,7 @@ export default function GymTracker() {
   // Training split by plate colour: the three days, then everything else
   const SPLIT = [
     ...DAYS.map((d) => ({ tone: d.tone, name: d.name })),
-    { tone: "other", name: "Custom / old Push & Pull" },
+    { tone: "other", name: "Other" },
   ];
 
   const countByTone = (list) =>
@@ -685,9 +871,11 @@ export default function GymTracker() {
     });
   };
 
-  const filteredKnown = getAllKnownExercises().filter((e) =>
-    e.toLowerCase().includes(addExerciseSearch.toLowerCase())
-  );
+  const filteredKnown = (
+    pickerMuscle === "all"
+      ? getAllKnownExercises()
+      : exercisesForMuscle(pickerMuscle, muscleExercises, getYourExercises())
+  ).filter((e) => e.toLowerCase().includes(addExerciseSearch.toLowerCase()));
 
   const plans = [
     ...DAYS.map((d) => ({
@@ -734,7 +922,9 @@ export default function GymTracker() {
                     key={s}
                     className="tab"
                     onClick={() => setScreen(s)}
-                    aria-current={screen === s ? "page" : undefined}
+                    aria-current={
+                      screen === s || (s === "home" && screen === "muscle") ? "page" : undefined
+                    }
                   >
                     <Icon size={20} aria-hidden="true" />
                     {label}
@@ -764,11 +954,48 @@ export default function GymTracker() {
 
             {workouts.length === 0 && (
               <p className="hint" style={{ marginBottom: 14 }}>
-                Pick a day to log your first session. Next time, the app
-                suggests your weights from the last one.
+                Pick a muscle or a day to log your first session. Next time, the
+                app suggests your weights from the last one.
               </p>
             )}
 
+            {(() => {
+              const ago = startOfDay(new Date());
+              ago.setDate(ago.getDate() - 6);
+              const stats = getMuscleStats(ago);
+              return (
+                <section aria-labelledby="muscles-title">
+                  <div className="section-head">
+                    <h2 className="section-title" id="muscles-title">
+                      Pick a muscle
+                    </h2>
+                  </div>
+                  <div className="muscle-grid">
+                    {MUSCLES.map((m) => {
+                      const st = stats[m.id];
+                      return (
+                        <button key={m.id} className="muscle-tile" onClick={() => openMuscle(m.id)}>
+                          <Disc type={MUSCLE_TYPE_PREFIX + m.id} size={26} />
+                          <span className="muscle-name">{m.name}</span>
+                          <span className="muscle-sub">
+                            {st.last ? relativeDay(st.last) : "Not trained yet"}
+                          </span>
+                          {st.sets > 0 && (
+                            <span className="muscle-sub num">
+                              {plural(st.sets, "set")} this week
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })()}
+
+            <div className="section-head section">
+              <h2 className="section-title">Your days</h2>
+            </div>
             <div className="list">
               {plans.map((plan) => {
                 const lastDone = getLastDone(plan.id);
@@ -827,6 +1054,191 @@ export default function GymTracker() {
             )}
           </>
         )}
+
+        {screen === "muscle" &&
+          getMuscle(muscleId) &&
+          (() => {
+            const muscle = getMuscle(muscleId);
+            const weekAgo = startOfDay(new Date());
+            weekAgo.setDate(weekAgo.getDate() - 6);
+            const monthAgo = startOfDay(new Date());
+            monthAgo.setDate(monthAgo.getDate() - 27);
+            const week = getMuscleStats(weekAgo)[muscle.id];
+            const month = getMuscleStats(monthAgo)[muscle.id];
+            const list = exercisesForMuscle(muscle.id, muscleExercises, getYourExercises());
+            const added = muscleExercises[muscle.id] || [];
+            // Ones you've done come first, most recent at the top
+            const rows = list
+              .map((name, i) => {
+                const history = getExerciseHistory(name);
+                const sets = history.flatMap((h) => completedSets(h.sets));
+                const best = sets.reduce(
+                  (b, st) =>
+                    !b || st.weight > b.weight || (st.weight === b.weight && st.reps > b.reps)
+                      ? st
+                      : b,
+                  null
+                );
+                return {
+                  name,
+                  i,
+                  last: history[0] || null,
+                  best,
+                  rec: recommend(name, history, settings.weightJump),
+                };
+              })
+              .sort((a, b) =>
+                a.last && b.last
+                  ? new Date(b.last.date) - new Date(a.last.date)
+                  : a.last
+                  ? -1
+                  : b.last
+                  ? 1
+                  : a.i - b.i
+              );
+            return (
+              <>
+                <div className="page-head">
+                  <div className="muscle-head">
+                    <button
+                      className="icon-btn"
+                      onClick={() => setScreen("home")}
+                      aria-label="Back to Train"
+                    >
+                      <ArrowLeft size={22} />
+                    </button>
+                    <Disc type={MUSCLE_TYPE_PREFIX + muscle.id} size={30} />
+                    <h1 className="page-title">{muscle.name}</h1>
+                  </div>
+                </div>
+
+                <div className="panel stat-row">
+                  <div>
+                    <span className="stat-value num">
+                      {week.last ? relativeDay(week.last) : "–"}
+                    </span>
+                    <span className="stat-label">Last trained</span>
+                  </div>
+                  <div>
+                    <span className="stat-value num">{week.sets}</span>
+                    <span className="stat-label">Sets this week</span>
+                  </div>
+                  <div>
+                    <span className="stat-value num">{month.sessions}</span>
+                    <span className="stat-label">Sessions in 4 weeks</span>
+                  </div>
+                </div>
+
+                <section className="section">
+                  <div className="section-head">
+                    <h2 className="section-title">Exercises</h2>
+                    {muscleSelection.length > 0 && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => setMuscleSelection([])}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="hint" style={{ marginBottom: 10 }}>
+                    Tick the ones you want to do, then start.
+                  </p>
+                  <div className="list">
+                    {rows.map(({ name, last, best, rec }) => {
+                      const on = muscleSelection.includes(name);
+                      const style = rec && REC_STYLE[rec.action];
+                      return (
+                        <div key={name} className="row pick-row">
+                          <button
+                            className="pick-toggle"
+                            aria-pressed={on}
+                            onClick={() => toggleMuscleExercise(name)}
+                          >
+                            <span className={`tick tone-${muscle.tone}`} aria-hidden="true">
+                              {on && <Check size={16} strokeWidth={3} />}
+                            </span>
+                            <span className="row-main">
+                              <span className="row-title">{name}</span>
+                              <span className="row-sub">
+                                {last ? (
+                                  <>
+                                    <span className="num">{formatSets(completedSets(last.sets))}</span>
+                                    {" · "}
+                                    {relativeDay(last.date)}
+                                  </>
+                                ) : (
+                                  "Not done yet"
+                                )}
+                              </span>
+                              {(rec || best) && (
+                                <span className="row-sub row-sub-quiet">
+                                  {rec && (
+                                    <span className={`next next-${rec.action}`}>
+                                      <style.Icon size={13} aria-hidden="true" />
+                                      {style.label(rec)} <span className="num">{rec.weight} kg</span>
+                                    </span>
+                                  )}
+                                  {rec && best && " · "}
+                                  {best && (
+                                    <>
+                                      Best <span className="num">{best.weight}×{best.reps}</span>
+                                    </>
+                                  )}
+                                </span>
+                              )}
+                            </span>
+                          </button>
+                          {added.includes(name) && (
+                            <button
+                              className="icon-btn danger"
+                              onClick={() => removeMuscleExercise(muscle.id, name)}
+                              aria-label={`Remove ${name} from ${muscle.name}`}
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <form
+                      className="inline-add"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        addMuscleExercise();
+                      }}
+                    >
+                      <input
+                        className="field"
+                        value={muscleDraft}
+                        onChange={(e) => setMuscleDraft(e.target.value)}
+                        placeholder="Add your own exercise"
+                        aria-label={`New ${muscle.name} exercise`}
+                      />
+                      <button type="submit" className="btn btn-secondary">
+                        Add
+                      </button>
+                    </form>
+                  </div>
+                </section>
+
+                <div className="start-bar">
+                  <button
+                    className="btn btn-primary btn-block"
+                    disabled={!muscleSelection.length}
+                    onClick={() =>
+                      handleWorkoutStart(
+                        MUSCLE_TYPE_PREFIX + muscle.id,
+                        // Keep the order they're listed in
+                        rows.map((r) => r.name).filter((n) => muscleSelection.includes(n))
+                      )
+                    }
+                  >
+                    {muscleSelection.length
+                      ? `Start ${muscle.name} · ${plural(muscleSelection.length, "exercise")}`
+                      : "Tick exercises to start"}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
 
         {screen === "calendar" &&
           (() => {
@@ -1007,6 +1419,38 @@ export default function GymTracker() {
                         </div>
                       </div>
                     </section>
+
+                    {(() => {
+                      const ago = startOfDay(new Date());
+                      ago.setDate(ago.getDate() - 6);
+                      const stats = getMuscleStats(ago);
+                      const top = Math.max(1, ...MUSCLES.map((m) => stats[m.id].sets));
+                      return (
+                        <section className="section">
+                          <div className="section-head">
+                            <h2 className="section-title">Sets by muscle, last 7 days</h2>
+                          </div>
+                          <div className="list">
+                            {MUSCLES.map((m) => (
+                              <button
+                                key={m.id}
+                                className="row muscle-bar-row"
+                                onClick={() => openMuscle(m.id)}
+                              >
+                                <span className="muscle-bar-name">{m.name}</span>
+                                <span className="muscle-bar" aria-hidden="true">
+                                  <span
+                                    className={`tone-${m.tone}`}
+                                    style={{ width: `${(stats[m.id].sets / top) * 100}%` }}
+                                  />
+                                </span>
+                                <span className="muscle-bar-count num">{stats[m.id].sets}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      );
+                    })()}
                   </>
                 )}
 
@@ -1124,7 +1568,65 @@ export default function GymTracker() {
               <h1 className="page-title">Plans</h1>
             </div>
 
-            <div className="list">
+            <div className="list account">
+              {!cloud.enabled ? (
+                <div className="setting-row">
+                  <CloudOff size={20} className="account-icon" aria-hidden="true" />
+                  <div className="row-main">
+                    <div className="row-title">Saved on this device only</div>
+                    <div className="row-sub">
+                      Connect a Supabase project to back up and sync your workouts. See
+                      SUPABASE.md.
+                    </div>
+                  </div>
+                </div>
+              ) : !cloud.ready ? (
+                <div className="setting-row">
+                  <Cloud size={20} className="account-icon" aria-hidden="true" />
+                  <div className="row-main row-sub">Checking your account…</div>
+                </div>
+              ) : !cloud.user ? (
+                <div className="setting-row">
+                  <CloudOff size={20} className="account-icon" aria-hidden="true" />
+                  <div className="row-main">
+                    <div className="row-title">Back up your workouts</div>
+                    <div className="row-sub">Sign in to save them to the cloud and use more than one device.</div>
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowAuth(true)}>
+                    Sign in
+                  </button>
+                </div>
+              ) : (
+                <div className="setting-row">
+                  <Cloud size={20} className="account-icon" aria-hidden="true" />
+                  <div className="row-main">
+                    <div className="row-title">{cloud.user.email}</div>
+                    <div className={`row-sub sync-${cloud.status}`} role="status">
+                      {cloud.status === "offline"
+                        ? `Offline · ${plural(cloud.pending, "change")} waiting to upload`
+                        : cloud.status === "error"
+                        ? `Couldn't sync: ${cloud.error}`
+                        : cloud.status === "synced" && !cloud.pending
+                        ? "Synced"
+                        : "Syncing…"}
+                    </div>
+                  </div>
+                  <button
+                    className="icon-btn"
+                    onClick={cloud.syncNow}
+                    disabled={cloud.status === "syncing"}
+                    aria-label="Sync now"
+                  >
+                    <RefreshCw size={18} />
+                  </button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowSignOut(true)}>
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="list section">
               <div className="setting-row">
                 <div className="row-main">
                   <div className="row-title">Sets per exercise</div>
@@ -1444,6 +1946,17 @@ export default function GymTracker() {
             aria-label="Search exercises"
             autoFocus
           />
+          <div className="filter-chips" role="group" aria-label="Filter by muscle">
+            {[{ id: "all", name: "All" }, ...MUSCLES].map((m) => (
+              <button
+                key={m.id}
+                aria-pressed={pickerMuscle === m.id}
+                onClick={() => setPickerMuscle(m.id)}
+              >
+                {m.name}
+              </button>
+            ))}
+          </div>
           <div className="pick-list" style={{ marginTop: 10 }}>
             {addExerciseSearch.trim() &&
               !filteredKnown.some(
@@ -1627,6 +2140,88 @@ export default function GymTracker() {
           confirmLabel="Delete plan"
           onConfirm={() => deleteCustomPlan(planToDelete.id)}
           onClose={() => setPlanToDelete(null)}
+        />
+      )}
+
+      {showAuth && (
+        <Sheet
+          title={authMode === "signin" ? "Sign in" : "Create account"}
+          onClose={closeAuth}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={closeAuth}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit" form="auth-form" disabled={authBusy}>
+                {authBusy ? "One sec…" : authMode === "signin" ? "Sign in" : "Create account"}
+              </button>
+            </>
+          }
+        >
+          <form id="auth-form" className="stack" onSubmit={submitAuth}>
+            <p className="hint">
+              {authMode === "signin"
+                ? "Your workouts, plans and settings sync to your account."
+                : "Workouts already on this device upload to the new account."}
+            </p>
+            <div>
+              <label className="label" htmlFor="auth-email">
+                Email
+              </label>
+              <input
+                id="auth-email"
+                type="email"
+                autoComplete="email"
+                className="field"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="auth-password">
+                Password
+              </label>
+              <input
+                id="auth-password"
+                type="password"
+                autoComplete={authMode === "signin" ? "current-password" : "new-password"}
+                minLength={6}
+                className="field"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+              />
+              {authMessage?.error && <p className="field-error">{authMessage.error}</p>}
+              {authMessage?.notice && <p className="field-note">{authMessage.notice}</p>}
+            </div>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                setAuthMode(authMode === "signin" ? "signup" : "signin");
+                setAuthMessage(null);
+              }}
+            >
+              {authMode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
+            </button>
+          </form>
+        </Sheet>
+      )}
+
+      {showSignOut && (
+        <ConfirmSheet
+          title="Sign out?"
+          body={
+            cloud.pending
+              ? `${cloud.pending === 1 ? "1 change hasn't" : `${cloud.pending} changes haven't`} uploaded yet and will be lost. Workouts already synced stay in your account.`
+              : "Your workouts stay in your account. This device's copy is cleared until you sign in again."
+          }
+          confirmLabel="Sign out"
+          onConfirm={() => {
+            setShowSignOut(false);
+            cloud.signOut();
+          }}
+          onClose={() => setShowSignOut(false)}
         />
       )}
 
