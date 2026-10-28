@@ -1,9 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('shows the push and pull plans on the train screen', () => {
+test('shows the three training days on the train screen', () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: /train/i })).toBeInTheDocument();
-  expect(screen.getByText('Push')).toBeInTheDocument();
-  expect(screen.getByText('Pull')).toBeInTheDocument();
+  expect(screen.getByText('Back')).toBeInTheDocument();
+  expect(screen.getByText('Chest')).toBeInTheDocument();
+  expect(screen.getByText('Shoulders & Arms')).toBeInTheDocument();
 });

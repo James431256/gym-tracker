@@ -6,9 +6,10 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 
 - Dark ground (`--floor` #121211), with panels one step lighter (`--panel`, `--panel-2`). People use the app between sets at arm's length, in mixed gym lighting.
 - Colour comes from the plates and means something every time:
-  - Push = red plate (`--plate-red`)
-  - Pull = blue plate (`--plate-blue`)
-  - Custom plans = yellow plate (`--plate-yellow`)
+  - Back = blue plate (`--plate-blue`)
+  - Chest = red plate (`--plate-red`)
+  - Shoulders & Arms = yellow plate (`--plate-yellow`)
+  - Custom plans and old Push/Pull sessions = white plate (`--plate-white`)
   - Beat last time = green plate (`--plate-green`)
 - The primary button is the white 5 kg plate (`--plate-white`) with dark text. Use one per view.
 - Focus rings, the caret and text selection use yellow.
@@ -23,7 +24,7 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 ## Signature
 
 - **Disc** (`<Disc type>`): a plate seen face-on. It marks a plan everywhere: plan rows, history, calendar dots and charts.
-- **Loaded plate** (`.plate[data-state]`): a plate seen edge-on, next to each set in a workout. Green = up on last time, steel = same, dark red = below, outline = no previous set. It springs in when the state changes.
+- **Loaded plate** (`.plate[data-state]`): a plate seen edge-on, next to each set in a workout. Outline = not logged yet, white = logged with no previous set, green = up on last time, steel = same, dark red = below. It springs in when the state changes.
 
 ## Components
 
