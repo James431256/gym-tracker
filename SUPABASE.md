@@ -2,12 +2,16 @@
 
 The app works without this: everything saves to the browser on the device you use. Connect a free Supabase project and you can sign in, keep a backup of every workout, and use the same account on your phone and laptop.
 
-## Set up (about 5 minutes)
+## This repo's project
+
+The app is already connected to the Supabase project `gym-tracker` ([dashboard](https://supabase.com/dashboard/project/uisdaueslzibzjwlxeng)). The tables from `supabase/schema.sql` are set up, and the URL and publishable key are in `.env`. Run `npm start`, go to **Plans**, tap **Sign in**, then **Create account**.
+
+## Set up your own project (about 5 minutes)
 
 1. Create a free project at [supabase.com](https://supabase.com/dashboard).
 2. Open **SQL Editor**, paste in everything from [`supabase/schema.sql`](supabase/schema.sql), and run it. This makes the `workouts` and `user_data` tables and locks them so each person can only read their own rows.
 3. Open **Project Settings → API Keys** and copy the project URL and the **publishable** key (the older **anon** key works too). Never use the secret / `service_role` key in the app.
-4. Copy `.env.example` to `.env.local` and paste them in:
+4. Copy `.env.example` to `.env.local` and paste them in. `.env.local` overrides the committed `.env`:
 
    ```
    REACT_APP_SUPABASE_URL=https://your-project-ref.supabase.co
