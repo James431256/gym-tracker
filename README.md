@@ -1,3 +1,10 @@
+# Gym Tracker
+
+Log workouts by day or by muscle, with weight suggestions from your last session.
+
+- **Train**: pick a muscle (Chest, Back, Shoulders, Biceps, Triceps, legs, core) to see its exercises, what you did last time, your best set and what to lift next. Tick the ones you want and start. Or start one of your days or plans.
+- **Cloud sync** (optional): connect a free Supabase project to back up workouts and sign in on more than one device. See [SUPABASE.md](SUPABASE.md).
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
