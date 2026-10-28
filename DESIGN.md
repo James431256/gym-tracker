@@ -9,7 +9,8 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
   - Back = blue plate (`--plate-blue`)
   - Chest = red plate (`--plate-red`)
   - Shoulders & Arms = yellow plate (`--plate-yellow`)
-  - Custom plans and old Push/Pull sessions = white plate (`--plate-white`)
+  - Custom plans, old Push/Pull sessions, and leg and core muscles = white plate (`--plate-white`)
+  - A muscle takes the plate of the day it's trained on: Chest red, Back blue, Shoulders, Biceps and Triceps yellow
   - Beat last time = green plate (`--plate-green`)
 - The primary button is the white 5 kg plate (`--plate-white`) with dark text. Use one per view.
 - Focus rings, the caret and text selection use yellow.
@@ -28,7 +29,7 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 
 ## Components
 
-- Lists are bordered rows inside one panel, not separate cards.
+- Lists are bordered rows inside one panel, not separate cards. The muscle picker on Train is the one grid of tiles.
 - Pop-ups are sheets (`<Sheet>`, `<ConfirmSheet>`). They slide up from the bottom on phones and appear centred from 640px. Every delete asks first.
 - Tabs sit in a bottom bar on phones and move into the top bar from 768px.
 - Hover styles only apply on devices with a real pointer (`@media (hover: hover) and (pointer: fine)`). Pressing a button scales it to 0.97.
