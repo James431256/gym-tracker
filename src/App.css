@@ -219,14 +219,17 @@
   stroke-width: 1.6;
 }
 
-.tone-push {
-  --tone: var(--plate-red);
-}
-.tone-pull {
+.tone-back {
   --tone: var(--plate-blue);
 }
-.tone-custom {
+.tone-chest {
+  --tone: var(--plate-red);
+}
+.tone-arms {
   --tone: var(--plate-yellow);
+}
+.tone-other {
+  --tone: var(--plate-white);
 }
 
 .dot {
@@ -407,6 +410,61 @@ button.row:active {
   }
 }
 
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 12px 14px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.setting-row:first-child {
+  border-top: 0;
+}
+
+.setting-row .row-title {
+  white-space: normal;
+}
+
+.segmented {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+}
+
+.segmented button {
+  min-width: 40px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-2);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--plate-white);
+  color: var(--floor);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .segmented button[aria-pressed="false"]:hover {
+    color: var(--text);
+  }
+}
+
 .label {
   display: block;
   font-size: 14px;
@@ -495,10 +553,19 @@ button.row:active {
 .exercise-name {
   flex: 1;
   min-width: 0;
+  padding-top: 8px;
+}
+
+.exercise-name h2 {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.25;
-  padding-top: 8px;
+}
+
+.exercise-meta {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-3);
 }
 
 .exercise-head .icon-btn {
@@ -506,21 +573,33 @@ button.row:active {
 }
 
 .rec {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
   font-size: 14px;
+  line-height: 1.4;
   color: var(--text-2);
-  margin-bottom: 10px;
+  margin: 6px 0 10px;
+}
+
+.rec svg {
+  flex: none;
+  margin-top: 2px;
 }
 
 .rec strong {
   font-weight: 600;
 }
 
+.rec-up svg,
 .rec-up strong {
   color: var(--up);
 }
-.rec-hold strong {
+.rec-stay svg,
+.rec-stay strong {
   color: var(--hold);
 }
+.rec-down svg,
 .rec-down strong {
   color: var(--down);
 }
@@ -613,6 +692,10 @@ button.row:active {
   animation: plate-load 280ms var(--ease-out);
 }
 
+.plate[data-state="new"] {
+  background: var(--plate-white);
+  box-shadow: none;
+}
 .plate[data-state="up"] {
   background: var(--plate-green);
   box-shadow: none;

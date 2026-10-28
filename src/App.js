@@ -12,8 +12,166 @@ import {
   Pencil,
   X,
   ArrowLeft,
+  ArrowUp,
+  ArrowDown,
+  ArrowRight,
 } from "lucide-react";
 import "./App.css";
+
+const loadSaved = (key, fallback) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+// Target rep range for double progression: build reps up to the top, then add weight
+const REP_MIN = 8;
+const REP_MAX = 10;
+
+// Each day is a bumper plate colour (see DESIGN.md)
+const DAYS = [
+  { id: "back", name: "Back", desc: "Lats, upper back, rear delts", tone: "back" },
+  { id: "chest", name: "Chest", desc: "Presses, flys", tone: "chest" },
+  {
+    id: "shoulders_arms",
+    name: "Shoulders & Arms",
+    desc: "Delts, biceps, triceps",
+    tone: "arms",
+  },
+];
+
+const DEFAULT_EXERCISES = {
+  back: [
+    "Lat Pulldowns",
+    "T-Bar Row",
+    "Row",
+    "Assisted Pull Ups",
+    "Pec Rear Delts",
+  ],
+  chest: [
+    "Smith Machine",
+    "Chest Press Machine",
+    "Cable Chest Exercise",
+    "Chest Press (Hands Touch)",
+    "Flys",
+  ],
+  shoulders_arms: [
+    "Shoulder Press",
+    "Lat Raises",
+    "Seatbelts",
+    "Bicep Curls",
+    "Preacher Curls",
+    "Barbell Skull Crushers",
+    "Tricep Extensions",
+  ],
+};
+
+const ADD_PLACEHOLDERS = {
+  back: "Face Pulls",
+  chest: "Incline Dumbbell Press",
+  shoulders_arms: "Hammer Curls",
+};
+
+// Move exercise lists saved under the old push/pull split onto the new days
+const migrateExercises = (saved) => {
+  if (!saved) return DEFAULT_EXERCISES;
+  if (!saved.push && !saved.pull) return { ...DEFAULT_EXERCISES, ...saved };
+  const result = { back: [], chest: [], shoulders_arms: [] };
+  const old = [
+    ...(saved.pull || []).map((name) => [name, "back"]),
+    ...(saved.push || []).map((name) => [name, "chest"]),
+  ];
+  old.forEach(([name, fallback]) => {
+    const known = Object.keys(DEFAULT_EXERCISES).find((d) =>
+      DEFAULT_EXERCISES[d].includes(name)
+    );
+    const looksLikeArmsOrShoulders =
+      /curl|bicep|tricep|skull|pushdown|extension|shoulder|lateral|raise|arnold/i.test(
+        name
+      );
+    const day =
+      known || (looksLikeArmsOrShoulders ? "shoulders_arms" : fallback);
+    if (!result[day].includes(name)) result[day].push(name);
+  });
+  // Keep the default ordering for known exercises, anything new goes last
+  Object.keys(result).forEach((d) => {
+    const order = (n) => {
+      const i = DEFAULT_EXERCISES[d].indexOf(n);
+      return i === -1 ? Infinity : i;
+    };
+    result[d].sort((a, b) => order(a) - order(b));
+  });
+  return result;
+};
+
+const completedSets = (sets) =>
+  (sets || []).filter((s) => (s.reps || 0) > 0);
+
+const roundWeight = (w) => Math.max(0, Math.round(w * 100) / 100);
+
+// Double progression on an 8-10 rep range:
+// - every set at the same weight hit 10+ reps -> add the smallest weight jump
+// - every set within 8-10 -> same weight, chase 10 on every set
+// - fell short of 8 -> same weight, unless it's well short or the second
+//   session in a row below 8, then drop the weight
+const recommend = (exerciseName, history, jump) => {
+  const sets = completedSets(history[0]?.sets);
+  if (!sets.length) return null;
+  const weight = sets[0].weight || 0;
+  const sameWeight = sets.every((s) => (s.weight || 0) === weight);
+  const minReps = Math.min(...sets.map((s) => s.reps));
+  // On assisted machines less assistance is harder
+  const assisted = /assist/i.test(exerciseName);
+  const harder = roundWeight(assisted ? weight - jump : weight + jump);
+  const easier = roundWeight(assisted ? weight + jump : weight - jump);
+
+  if (sameWeight && minReps >= REP_MAX)
+    return {
+      action: "up",
+      weight: harder,
+      assisted,
+      reason: `Hit ${REP_MAX}+ reps on every set`,
+    };
+
+  if (minReps < REP_MIN) {
+    const prev = completedSets(history[1]?.sets);
+    const shortTwiceInARow =
+      prev.length &&
+      (prev[0].weight || 0) === weight &&
+      Math.min(...prev.map((s) => s.reps)) < REP_MIN;
+    if (minReps <= REP_MIN - 3 || shortTwiceInARow)
+      return {
+        action: "down",
+        weight: easier,
+        assisted,
+        reason: shortTwiceInARow
+          ? `Under ${REP_MIN} reps two sessions running`
+          : `Only ${minReps} reps, too heavy for now`,
+      };
+    return {
+      action: "stay",
+      weight,
+      reason: `Get every set to ${REP_MIN}+ reps`,
+    };
+  }
+
+  return {
+    action: "stay",
+    weight,
+    reason: sameWeight
+      ? `Aim for ${REP_MAX} reps on every set`
+      : `Get every set to ${REP_MAX} at ${weight} kg`,
+  };
+};
+
+const REC_STYLE = {
+  up: { Icon: ArrowUp, label: (r) => (r.assisted ? "Less assistance:" : "Go up to") },
+  stay: { Icon: ArrowRight, label: () => "Stay at" },
+  down: { Icon: ArrowDown, label: (r) => (r.assisted ? "More assistance:" : "Drop to") },
+};
 
 const MONTHS = [
   "January",
@@ -38,43 +196,10 @@ const TABS = [
   ["manage", "Plans", ClipboardList],
 ];
 
-const DEFAULT_EXERCISES = {
-  pull: [
-    "Lat Pulldowns",
-    "T-Bar Row",
-    "Row",
-    "Assisted Pull Ups",
-    "Pec Rear Delts",
-    "Bicep Curls",
-    "Preacher Curls",
-  ],
-  push: [
-    "Smith Machine",
-    "Chest Press Machine",
-    "Cable Chest Exercise",
-    "Chest Press (Hands Touch)",
-    "Flys",
-    "Lat Raises",
-    "Shoulder Press",
-    "Barbell Skull Crushers",
-    "Tricep Extensions",
-    "Seatbelts",
-  ],
-};
+// Custom plans and old push/pull sessions share the white plate
+const toneFor = (type) => DAYS.find((d) => d.id === type)?.tone || "other";
 
-// Read saved data during the first render, so the save effects never
-// overwrite storage with empty defaults before it has been loaded
-const loadStored = (key, fallback) => {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-const toneFor = (type) =>
-  type === "push" ? "push" : type === "pull" ? "pull" : "custom";
+const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
 
 const startOfDay = (d) => {
   const x = new Date(d);
@@ -93,7 +218,9 @@ const relativeDay = (iso) => {
   });
 };
 
+// A set counts once it has reps; weight decides first, then reps
 const compareSet = (set, last) => {
+  if (!set.reps) return "todo";
   if (!last) return "new";
   const w = set.weight || 0,
     lw = last.weight || 0,
@@ -105,13 +232,14 @@ const compareSet = (set, last) => {
 };
 
 const STATE_LABEL = {
-  new: "No previous set",
+  todo: "Not logged yet",
+  new: "Logged, no previous set",
   up: "Up on last time",
   same: "Same as last time",
   down: "Below last time",
 };
 
-// A bumper plate seen face-on, coloured by plan
+// A bumper plate seen face-on, coloured by day
 function Disc({ type, size = 32 }) {
   return (
     <svg
@@ -183,11 +311,28 @@ function ConfirmSheet({ title, body, confirmLabel, cancelLabel, onConfirm, onClo
   );
 }
 
+function Segmented({ label, options, value, onChange }) {
+  return (
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o} aria-pressed={value === o} onClick={() => onChange(o)}>
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function GymTracker() {
-  const [activeWorkout, setActiveWorkout] = useState(() => loadStored("activeWorkout", null));
-  const [screen, setScreen] = useState(() => (activeWorkout ? "workout" : "home"));
-  const [workouts, setWorkouts] = useState(() => loadStored("gymWorkouts", []));
-  const [addDrafts, setAddDrafts] = useState({ push: "", pull: "" });
+  // Read saved data during the first render so nothing can overwrite it before it loads
+  const [activeWorkout, setActiveWorkout] = useState(() =>
+    loadSaved("activeWorkout", null)
+  );
+  const [screen, setScreen] = useState(() =>
+    loadSaved("activeWorkout", null) ? "workout" : "home"
+  );
+  const [workouts, setWorkouts] = useState(() => loadSaved("gymWorkouts", []));
+  const [addDrafts, setAddDrafts] = useState({});
   const [exerciseToDelete, setExerciseToDelete] = useState(null);
   const [workoutToDelete, setWorkoutToDelete] = useState(null);
   const [planToDelete, setPlanToDelete] = useState(null);
@@ -205,14 +350,22 @@ export default function GymTracker() {
   const [addExerciseAt, setAddExerciseAt] = useState(null);
   const [addExerciseSearch, setAddExerciseSearch] = useState("");
   const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
-  const [customPlans, setCustomPlans] = useState(() => loadStored("gymCustomPlans", []));
   const [monthOffset, setMonthOffset] = useState(0);
+  const [customPlans, setCustomPlans] = useState(() =>
+    loadSaved("gymCustomPlans", [])
+  );
 
-  const [exercises, setExercises] = useState(() => loadStored("gymExercises", DEFAULT_EXERCISES));
+  const [exercises, setExercises] = useState(() =>
+    migrateExercises(loadSaved("gymExercises", null))
+  );
+  const [settings, setSettings] = useState(() => ({
+    defaultSets: 2,
+    weightJump: 2.5,
+    ...loadSaved("gymSettings", {}),
+  }));
 
   useEffect(() => {
-    if (workouts.length > 0)
-      localStorage.setItem("gymWorkouts", JSON.stringify(workouts));
+    localStorage.setItem("gymWorkouts", JSON.stringify(workouts));
   }, [workouts]);
 
   useEffect(() => {
@@ -221,6 +374,9 @@ export default function GymTracker() {
   useEffect(() => {
     localStorage.setItem("gymCustomPlans", JSON.stringify(customPlans));
   }, [customPlans]);
+  useEffect(() => {
+    localStorage.setItem("gymSettings", JSON.stringify(settings));
+  }, [settings]);
 
   // Save active workout to localStorage
   useEffect(() => {
@@ -236,59 +392,22 @@ export default function GymTracker() {
   }, [screen]);
 
   const getAllKnownExercises = () => {
-    const fromPlans = [...exercises.push, ...exercises.pull];
+    const fromPlans = Object.values(exercises).flat();
     const fromHistory = workouts.flatMap((w) => w.exercises.map((e) => e.name));
     const fromCustom = customPlans.flatMap((p) => p.exercises);
     return [...new Set([...fromPlans, ...fromHistory, ...fromCustom])].sort();
   };
 
-  const getLastWorkoutData = (workoutType, exerciseName) => {
-    const last = workouts
-      .filter((w) => w.type === workoutType)
-      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-    if (!last) return null;
-    const ex = last.exercises.find((e) => e.name === exerciseName);
-    return ex?.sets || null;
-  };
-
-  const getLastWorkoutDataAny = (exerciseName) => {
-    const last = workouts
+  // Past sessions of an exercise on any day, newest first
+  const getExerciseHistory = (exerciseName) =>
+    workouts
       .filter((w) => w.exercises.some((e) => e.name === exerciseName))
-      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-    if (!last) return null;
-    const ex = last.exercises.find((e) => e.name === exerciseName);
-    return ex?.sets || null;
-  };
-
-  const getRecommendation = (exerciseName, workoutType) => {
-    const relevant = workouts
-      .filter(
-        (w) =>
-          w.type === workoutType &&
-          w.exercises.some((e) => e.name === exerciseName)
-      )
       .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 3);
-    if (!relevant.length) return null;
-    const lastSession = relevant[0].exercises.find(
-      (e) => e.name === exerciseName
-    );
-    if (!lastSession) return null;
-    const avgReps =
-      lastSession.sets.reduce((s, r) => s + (r.reps || 0), 0) /
-      lastSession.sets.length;
-    const lastWeight = lastSession.sets[0]?.weight || 0;
-    const reps = Math.round(avgReps);
-    if (avgReps >= 10)
-      return { tone: "up", lead: `Averaged ${reps} reps.`, action: `Try ${lastWeight + 2.5} kg` };
-    if (avgReps <= 6)
-      return {
-        tone: "down",
-        lead: `Averaged ${reps} reps.`,
-        action: `Drop to ${Math.max(0, lastWeight - 2.5)} kg`,
-      };
-    return { tone: "hold", lead: `Averaged ${reps} reps.`, action: `Push for ${reps + 2}` };
-  };
+      .map((w) => ({
+        date: w.date,
+        sets: w.exercises.find((e) => e.name === exerciseName).sets,
+      }))
+      .filter((h) => completedSets(h.sets).length);
 
   const handleWorkoutStart = (type) => {
     setPendingWorkoutType(type);
@@ -298,30 +417,36 @@ export default function GymTracker() {
     setShowDatePicker(true);
   };
 
-  const buildExerciseEntry = (exerciseName, type) => {
-    const lastSets = type
-      ? getLastWorkoutData(type, exerciseName)
-      : getLastWorkoutDataAny(exerciseName);
+  const buildExerciseEntry = (exerciseName) => {
+    const history = getExerciseHistory(exerciseName);
+    const last = history[0] || null;
+    const rec = recommend(exerciseName, history, settings.weightJump);
+    const lastSets = last ? completedSets(last.sets) : null;
+    // Pre-fill the recommended weight; keep last reps only when the weight is unchanged
+    const sets = Array.from({ length: settings.defaultSets }, (_, i) => {
+      const prev = lastSets?.[i] || lastSets?.[lastSets.length - 1];
+      const weight = rec ? rec.weight : prev?.weight || 0;
+      return {
+        weight,
+        reps: prev && prev.weight === weight ? prev.reps : 0,
+      };
+    });
     return {
       id: Date.now() + Math.random(),
       name: exerciseName,
-      sets: [
-        { weight: lastSets?.[0]?.weight || 0, reps: lastSets?.[0]?.reps || 0 },
-        { weight: lastSets?.[1]?.weight || 0, reps: lastSets?.[1]?.reps || 0 },
-        { weight: lastSets?.[2]?.weight || 0, reps: lastSets?.[2]?.reps || 0 },
-      ],
-      lastSets: lastSets || null,
+      sets,
+      lastSets,
+      lastDate: last?.date || null,
+      rec,
     };
   };
 
   const startWorkout = (type) => {
-    let list =
-      type === "push"
-        ? exercises.push
-        : type === "pull"
-        ? exercises.pull
-        : customPlans.find((p) => p.id === type)?.exercises || [];
-    const workoutExercises = list.map((n) => buildExerciseEntry(n, type));
+    const list =
+      exercises[type] ||
+      customPlans.find((p) => p.id === type)?.exercises ||
+      [];
+    const workoutExercises = list.map((n) => buildExerciseEntry(n));
     const workoutDate =
       selectedDate && selectedTime
         ? new Date(`${selectedDate}T${selectedTime}`).toISOString()
@@ -391,7 +516,7 @@ export default function GymTracker() {
   };
 
   const insertExercise = (name) => {
-    const entry = buildExerciseEntry(name, activeWorkout?.type);
+    const entry = buildExerciseEntry(name);
     setActiveWorkout((aw) => {
       const exs = [...aw.exercises];
       if (addExerciseAt === "end") {
@@ -407,9 +532,7 @@ export default function GymTracker() {
   };
 
   const finishWorkout = () => {
-    const updated = [activeWorkout, ...workouts];
-    setWorkouts(updated);
-    localStorage.setItem("gymWorkouts", JSON.stringify(updated));
+    setWorkouts([activeWorkout, ...workouts]);
     setActiveWorkout(null);
     setScreen("home");
   };
@@ -421,16 +544,14 @@ export default function GymTracker() {
   };
 
   const deleteWorkout = (id) => {
-    const updated = workouts.filter((w) => w.id !== id);
-    setWorkouts(updated);
-    localStorage.setItem("gymWorkouts", JSON.stringify(updated));
+    setWorkouts(workouts.filter((w) => w.id !== id));
     setWorkoutToDelete(null);
   };
 
   const addExerciseToList = (type) => {
-    const name = addDrafts[type].trim();
+    const name = (addDrafts[type] || "").trim();
     if (!name) return;
-    setExercises({ ...exercises, [type]: [...exercises[type], name] });
+    setExercises({ ...exercises, [type]: [...(exercises[type] || []), name] });
     setAddDrafts({ ...addDrafts, [type]: "" });
   };
 
@@ -496,7 +617,10 @@ export default function GymTracker() {
     setPlanToDelete(null);
   };
 
+  const getDay = (type) => DAYS.find((d) => d.id === type);
+
   const getWorkoutLabel = (type) => {
+    if (getDay(type)) return getDay(type).name;
     if (type === "push") return "Push";
     if (type === "pull") return "Pull";
     return customPlans.find((p) => p.id === type)?.name || "Custom";
@@ -526,13 +650,23 @@ export default function GymTracker() {
     return { daysInMonth, startDow, wDates, cm, cy };
   };
 
+  // Training split by plate colour: the three days, then everything else
+  const SPLIT = [
+    ...DAYS.map((d) => ({ tone: d.tone, name: d.name })),
+    { tone: "other", name: "Custom / old Push & Pull" },
+  ];
+
+  const countByTone = (list) =>
+    SPLIT.map((s) => ({
+      ...s,
+      count: list.filter((w) => toneFor(w.type) === s.tone).length,
+    }));
+
   const getInsights = () => {
     const ago = new Date();
     ago.setDate(ago.getDate() - 28);
     const last4 = workouts.filter((w) => new Date(w.date) >= ago);
-    const push = last4.filter((w) => w.type === "push").length;
-    const pull = last4.filter((w) => w.type === "pull").length;
-    return { push, pull, custom: last4.length - push - pull, total: last4.length };
+    return { split: countByTone(last4), total: last4.length };
   };
 
   const getWeeks = (n = 8) => {
@@ -547,9 +681,7 @@ export default function GymTracker() {
         const d = new Date(w.date);
         return d >= start && d < end;
       });
-      const push = ws.filter((w) => w.type === "push").length;
-      const pull = ws.filter((w) => w.type === "pull").length;
-      return { start, push, pull, custom: ws.length - push - pull, total: ws.length };
+      return { start, split: countByTone(ws), total: ws.length };
     });
   };
 
@@ -558,8 +690,12 @@ export default function GymTracker() {
   );
 
   const plans = [
-    { id: "push", name: "Push", sub: "Chest, shoulders, triceps", exercises: exercises.push },
-    { id: "pull", name: "Pull", sub: "Back, biceps", exercises: exercises.pull },
+    ...DAYS.map((d) => ({
+      id: d.id,
+      name: d.name,
+      sub: d.desc,
+      exercises: exercises[d.id] || [],
+    })),
     ...customPlans.map((p) => ({ id: p.id, name: p.name, sub: null, exercises: p.exercises })),
   ];
 
@@ -589,7 +725,7 @@ export default function GymTracker() {
           ) : (
             <>
               <div className="brand">
-                <Disc type="push" size={22} />
+                <Disc type="chest" size={22} />
                 Gym Tracker
               </div>
               <nav className="tabs" aria-label="Main">
@@ -628,8 +764,8 @@ export default function GymTracker() {
 
             {workouts.length === 0 && (
               <p className="hint" style={{ marginBottom: 14 }}>
-                Pick a plan to log your first session. Next time, your weights
-                fill in from the last one.
+                Pick a day to log your first session. Next time, the app
+                suggests your weights from the last one.
               </p>
             )}
 
@@ -647,7 +783,7 @@ export default function GymTracker() {
                       <div className="row-title">{plan.name}</div>
                       {plan.sub && <div className="row-sub">{plan.sub}</div>}
                       <div className="row-sub row-sub-quiet">
-                        {plan.exercises.length} exercises
+                        {plural(plan.exercises.length, "exercise")}
                         {lastDone ? ` · ${lastDone}` : ""}
                       </div>
                     </div>
@@ -678,8 +814,9 @@ export default function GymTracker() {
                       <div className="row-main">
                         <div className="row-title">{getWorkoutLabel(w.type)}</div>
                         <div className="row-sub">
-                          {w.exercises.length} exercises ·{" "}
-                          {w.exercises.reduce((n, e) => n + e.sets.length, 0)} sets
+                          {plural(w.exercises.length, "exercise")} ·{" "}
+                          {w.exercises.reduce((n, e) => n + completedSets(e.sets).length, 0)}{" "}
+                          sets
                         </div>
                       </div>
                       <div className="row-aside">{relativeDay(w.date)}</div>
@@ -722,7 +859,6 @@ export default function GymTracker() {
                       onClick={() => setMonthOffset(monthOffset + 1)}
                       aria-label="Next month"
                       disabled={monthOffset >= 0}
-                      style={monthOffset >= 0 ? { opacity: 0.35, cursor: "default" } : undefined}
                     >
                       <ChevronRight size={20} />
                     </button>
@@ -761,14 +897,13 @@ export default function GymTracker() {
                   </div>
                 </div>
                 <div className="legend">
+                  {DAYS.map((d) => (
+                    <span key={d.id}>
+                      <span className={`dot tone-${d.tone}`} /> {d.name}
+                    </span>
+                  ))}
                   <span>
-                    <span className="dot tone-push" /> Push
-                  </span>
-                  <span>
-                    <span className="dot tone-pull" /> Pull
-                  </span>
-                  <span>
-                    <span className="dot tone-custom" /> Custom
+                    <span className="dot tone-other" /> Other
                   </span>
                 </div>
               </>
@@ -777,7 +912,7 @@ export default function GymTracker() {
 
         {screen === "insights" &&
           (() => {
-            const { push, pull, custom, total } = getInsights();
+            const { split, total } = getInsights();
             const weeks = getWeeks();
             const peak = Math.max(3, ...weeks.map((w) => w.total));
             return (
@@ -805,24 +940,25 @@ export default function GymTracker() {
                       {total > 0 && (
                         <>
                           <div className="split-bar" aria-hidden="true">
-                            {push > 0 && <span className="tone-push" style={{ flex: push }} />}
-                            {pull > 0 && <span className="tone-pull" style={{ flex: pull }} />}
-                            {custom > 0 && (
-                              <span className="tone-custom" style={{ flex: custom }} />
-                            )}
+                            {split
+                              .filter((s) => s.count > 0)
+                              .map((s) => (
+                                <span
+                                  key={s.tone}
+                                  className={`tone-${s.tone}`}
+                                  style={{ flex: s.count }}
+                                />
+                              ))}
                           </div>
                           <div className="legend" style={{ marginTop: 8 }}>
-                            <span>
-                              <span className="dot tone-push" /> Push {push}
-                            </span>
-                            <span>
-                              <span className="dot tone-pull" /> Pull {pull}
-                            </span>
-                            {custom > 0 && (
-                              <span>
-                                <span className="dot tone-custom" /> Custom {custom}
-                              </span>
-                            )}
+                            {split
+                              .filter((s) => s.count > 0 || s.tone !== "other")
+                              .map((s) => (
+                                <span key={s.tone}>
+                                  <span className={`dot tone-${s.tone}`} /> {s.name}{" "}
+                                  {s.count}
+                                </span>
+                              ))}
                           </div>
                         </>
                       )}
@@ -845,17 +981,13 @@ export default function GymTracker() {
                               {w.total === 0 ? (
                                 <span className="week-empty" />
                               ) : (
-                                [
-                                  ["push", w.push],
-                                  ["pull", w.pull],
-                                  ["custom", w.custom],
-                                ]
-                                  .filter(([, n]) => n > 0)
-                                  .map(([t, n]) => (
+                                w.split
+                                  .filter((s) => s.count > 0)
+                                  .map((s) => (
                                     <span
-                                      key={t}
-                                      className={`week-seg tone-${t}`}
-                                      style={{ height: `${(n / peak) * 100}%` }}
+                                      key={s.tone}
+                                      className={`week-seg tone-${s.tone}`}
+                                      style={{ height: `${(s.count / peak) * 100}%` }}
                                     />
                                   ))
                               )}
@@ -884,16 +1016,20 @@ export default function GymTracker() {
                   </div>
                   <div className="panel">
                     <dl className="rules">
-                      <dt>10–12 reps</dt>
-                      <dd>Add 2.5–5 kg next session.</dd>
-                      <dt>7–9 reps</dt>
-                      <dd>Same weight, push for 1–2 more reps.</dd>
-                      <dt>6 or fewer</dt>
-                      <dd>Drop 2.5 kg and build back up.</dd>
-                      <dt>Deload</dt>
-                      <dd>Every 4–6 weeks, cut the weight by 20%.</dd>
+                      <dt>Rep range</dt>
+                      <dd>
+                        {REP_MIN}–{REP_MAX} reps on every working set.
+                      </dd>
+                      <dt>{REP_MAX}+ every set</dt>
+                      <dd>Go up by the smallest jump ({settings.weightJump} kg).</dd>
+                      <dt>
+                        {REP_MIN}–{REP_MAX - 1} reps
+                      </dt>
+                      <dd>Same weight, add a rep where you can.</dd>
+                      <dt>Under {REP_MIN} twice</dt>
+                      <dd>Drop the weight a step.</dd>
                       <dt>Rest</dt>
-                      <dd>60–90 seconds between sets.</dd>
+                      <dd>2–3 minutes between sets so reps don't drop off.</dd>
                     </dl>
                   </div>
                 </section>
@@ -954,19 +1090,24 @@ export default function GymTracker() {
                       <p className="hint">No exercises logged.</p>
                     )}
                     {w.exercises.map((ex, i) => {
-                      const top = ex.sets.reduce(
+                      const done = completedSets(ex.sets);
+                      const top = done.reduce(
                         (best, s) => ((s.weight || 0) > (best.weight || 0) ? s : best),
-                        ex.sets[0] || { weight: 0, reps: 0 }
+                        done[0] || { weight: 0, reps: 0 }
                       );
                       return (
                         <div key={i} className="session-line">
                           <span>{ex.name}</span>
-                          <span>
-                            {top.weight} × {top.reps}
-                            <span style={{ color: "var(--text-3)" }}>
-                              {" "}· {ex.sets.length} {ex.sets.length === 1 ? "set" : "sets"}
+                          {done.length ? (
+                            <span>
+                              {top.weight} × {top.reps}
+                              <span style={{ color: "var(--text-3)" }}>
+                                {" "}· {done.length} {done.length === 1 ? "set" : "sets"}
+                              </span>
                             </span>
-                          </span>
+                          ) : (
+                            <span style={{ color: "var(--text-3)" }}>Skipped</span>
+                          )}
                         </div>
                       );
                     })}
@@ -983,21 +1124,48 @@ export default function GymTracker() {
               <h1 className="page-title">Plans</h1>
             </div>
 
-            {["push", "pull"].map((type) => (
-              <section key={type} className="section" style={type === "push" ? { marginTop: 0 } : undefined}>
+            <div className="list">
+              <div className="setting-row">
+                <div className="row-main">
+                  <div className="row-title">Sets per exercise</div>
+                  <div className="row-sub">You can still add a set during a workout.</div>
+                </div>
+                <Segmented
+                  label="Sets per exercise"
+                  options={[2, 3]}
+                  value={settings.defaultSets}
+                  onChange={(n) => setSettings({ ...settings, defaultSets: n })}
+                />
+              </div>
+              <div className="setting-row">
+                <div className="row-main">
+                  <div className="row-title">Weight jump</div>
+                  <div className="row-sub">How much to go up or down by, in kg.</div>
+                </div>
+                <Segmented
+                  label="Weight jump in kg"
+                  options={[1, 2, 2.5, 5]}
+                  value={settings.weightJump}
+                  onChange={(n) => setSettings({ ...settings, weightJump: n })}
+                />
+              </div>
+            </div>
+
+            {DAYS.map((day) => (
+              <section key={day.id} className="section">
                 <div className="section-head">
                   <h2 className="section-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Disc type={type} size={20} />
-                    {type === "push" ? "Push" : "Pull"} exercises
+                    <Disc type={day.id} size={20} />
+                    {day.name}
                   </h2>
                 </div>
                 <div className="list">
-                  {exercises[type].map((ex, i) => (
+                  {(exercises[day.id] || []).map((ex, i) => (
                     <div key={i} className="row" style={{ padding: "6px 6px 6px 16px" }}>
                       <div className="row-main">{ex}</div>
                       <button
                         className="icon-btn danger"
-                        onClick={() => setExerciseToDelete({ type, name: ex })}
+                        onClick={() => setExerciseToDelete({ type: day.id, name: ex })}
                         aria-label={`Remove ${ex}`}
                       >
                         <Trash2 size={17} />
@@ -1008,15 +1176,15 @@ export default function GymTracker() {
                     className="inline-add"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      addExerciseToList(type);
+                      addExerciseToList(day.id);
                     }}
                   >
                     <input
                       className="field"
-                      value={addDrafts[type]}
-                      onChange={(e) => setAddDrafts({ ...addDrafts, [type]: e.target.value })}
-                      placeholder={type === "push" ? "Incline Dumbbell Press" : "Face Pulls"}
-                      aria-label={`New ${type} exercise`}
+                      value={addDrafts[day.id] || ""}
+                      onChange={(e) => setAddDrafts({ ...addDrafts, [day.id]: e.target.value })}
+                      placeholder={ADD_PLACEHOLDERS[day.id]}
+                      aria-label={`New ${day.name} exercise`}
                     />
                     <button type="submit" className="btn btn-secondary">
                       Add
@@ -1036,7 +1204,7 @@ export default function GymTracker() {
                     <Disc type={plan.id} size={24} />
                     <div className="row-main">
                       <div className="row-title">{plan.name}</div>
-                      <div className="row-sub">{plan.exercises.length} exercises</div>
+                      <div className="row-sub">{plural(plan.exercises.length, "exercise")}</div>
                     </div>
                     <button
                       className="icon-btn"
@@ -1068,12 +1236,26 @@ export default function GymTracker() {
         {screen === "workout" &&
           activeWorkout &&
           (() => {
+            // Workouts started before progression advice don't carry these yet
+            const withHistory = activeWorkout.exercises.map((exercise) => {
+              if (exercise.lastDate !== undefined) return exercise;
+              const history = getExerciseHistory(exercise.name);
+              return {
+                ...exercise,
+                rec: recommend(exercise.name, history, settings.weightJump),
+                lastSets: history[0] ? completedSets(history[0].sets) : null,
+                lastDate: history[0]?.date || null,
+              };
+            });
             let upCount = 0,
+              doneCount = 0,
               setCount = 0;
-            activeWorkout.exercises.forEach((ex) =>
+            withHistory.forEach((ex) =>
               ex.sets.forEach((s, i) => {
                 setCount++;
-                if (compareSet(s, ex.lastSets?.[i]) === "up") upCount++;
+                const state = compareSet(s, ex.lastSets?.[i]);
+                if (state !== "todo") doneCount++;
+                if (state === "up") upCount++;
               })
             );
             return (
@@ -1092,7 +1274,7 @@ export default function GymTracker() {
                     })}
                   </span>
                   <span>
-                    {activeWorkout.exercises.length} exercises · {setCount} sets
+                    {doneCount} of {setCount} sets logged
                   </span>
                   {upCount > 0 && (
                     <span className="up-count">
@@ -1101,15 +1283,16 @@ export default function GymTracker() {
                   )}
                 </div>
 
-                {activeWorkout.exercises.length === 0 && (
+                {withHistory.length === 0 && (
                   <div className="empty" style={{ marginTop: 12 }}>
                     <h2>This workout is empty</h2>
                     <p>Add an exercise to start logging sets.</p>
                   </div>
                 )}
 
-                {activeWorkout.exercises.map((exercise, index) => {
-                  const rec = getRecommendation(exercise.name, activeWorkout.type);
+                {withHistory.map((exercise, index) => {
+                  const { rec, lastSets, lastDate } = exercise;
+                  const style = rec && REC_STYLE[rec.action];
                   return (
                     <div key={exercise.id}>
                       <button
@@ -1122,7 +1305,14 @@ export default function GymTracker() {
 
                       <section className="exercise" aria-label={exercise.name}>
                         <div className="exercise-head">
-                          <h2 className="exercise-name">{exercise.name}</h2>
+                          <div className="exercise-name">
+                            <h2>{exercise.name}</h2>
+                            {lastDate && (
+                              <p className="exercise-meta">
+                                Last done {relativeDay(lastDate).toLowerCase()}
+                              </p>
+                            )}
+                          </div>
                           <button
                             className="icon-btn danger"
                             onClick={() => removeExercise(exercise.id)}
@@ -1132,10 +1322,25 @@ export default function GymTracker() {
                           </button>
                         </div>
 
-                        {rec && (
-                          <p className={`rec rec-${rec.tone}`}>
-                            {rec.lead} <strong>{rec.action}</strong>
+                        {rec ? (
+                          <p className={`rec rec-${rec.action}`}>
+                            <style.Icon size={15} aria-hidden="true" />
+                            <span>
+                              <strong>
+                                {style.label(rec)} {rec.weight} kg
+                              </strong>{" "}
+                              · {rec.reason}
+                            </span>
                           </p>
+                        ) : (
+                          !lastSets?.length && (
+                            <p className="rec">
+                              <span>
+                                First time: pick a weight you can do for {REP_MIN}–{REP_MAX}{" "}
+                                reps.
+                              </span>
+                            </p>
+                          )
                         )}
 
                         <div className="sets">
@@ -1148,7 +1353,7 @@ export default function GymTracker() {
                             <span />
                           </div>
                           {exercise.sets.map((set, idx) => {
-                            const last = exercise.lastSets?.[idx];
+                            const last = lastSets?.[idx];
                             const state = compareSet(set, last);
                             return (
                               <div key={idx} className="set-row">
@@ -1406,7 +1611,9 @@ export default function GymTracker() {
       {exerciseToDelete && (
         <ConfirmSheet
           title="Remove exercise?"
-          body={`“${exerciseToDelete.name}” comes off your ${exerciseToDelete.type} plan. Past workouts keep it.`}
+          body={`“${exerciseToDelete.name}” comes off your ${getWorkoutLabel(
+            exerciseToDelete.type
+          )} day. Past workouts keep it.`}
           confirmLabel="Remove"
           onConfirm={() => deleteExercise(exerciseToDelete.type, exerciseToDelete.name)}
           onClose={() => setExerciseToDelete(null)}
