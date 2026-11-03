@@ -50,13 +50,14 @@ const REP_MAX = 10;
 // Each day is a bumper plate colour (see DESIGN.md)
 const DAYS = [
   { id: "back", name: "Back", desc: "Lats, upper back, rear delts", tone: "back" },
-  { id: "chest", name: "Chest", desc: "Presses", tone: "chest" },
-  {
-    id: "shoulders_arms",
-    name: "Shoulders & Arms",
-    desc: "Delts, biceps, triceps",
-    tone: "arms",
-  },
+  { id: "chest_shoulders", name: "Chest & Shoulders", desc: "Presses, delts", tone: "chest" },
+  { id: "arms", name: "Arms", desc: "Biceps, triceps", tone: "arms" },
+];
+
+// Days from earlier splits, so old sessions keep their name and plate
+const OLD_DAYS = [
+  { id: "chest", name: "Chest", tone: "chest" },
+  { id: "shoulders_arms", name: "Shoulders & Arms", tone: "arms" },
 ];
 
 const DEFAULT_EXERCISES = {
@@ -67,17 +68,17 @@ const DEFAULT_EXERCISES = {
     "Assisted Pull Ups",
     "Pec Rear Delts",
   ],
-  chest: [
+  chest_shoulders: [
     "Smith Machine",
     "Chest Press Machine",
     "Cable Chest Exercise",
     "Chest Press (Hands Touch)",
-  ],
-  shoulders_arms: [
     "Shoulder Press",
     "Lat Raises",
     "Seatbelts",
     "Flys",
+  ],
+  arms: [
     "Bicep Curls",
     "Preacher Curls",
     "Barbell Skull Crushers",
@@ -87,38 +88,29 @@ const DEFAULT_EXERCISES = {
 
 const ADD_PLACEHOLDERS = {
   back: "Face Pulls",
-  chest: "Incline Dumbbell Press",
-  shoulders_arms: "Hammer Curls",
+  chest_shoulders: "Incline Dumbbell Press",
+  arms: "Hammer Curls",
 };
 
-// Move exercise lists saved under the old push/pull split onto the new days
+// Move exercise lists saved under the old push/pull split onto the
+// Back / Chest / Shoulders & Arms days; tidyPrefs takes them from there
 const migrateExercises = (saved) => {
   if (!saved) return DEFAULT_EXERCISES;
-  if (!saved.push && !saved.pull) return { ...DEFAULT_EXERCISES, ...saved };
+  if (!saved.push && !saved.pull) return saved;
   const result = { back: [], chest: [], shoulders_arms: [] };
   const old = [
     ...(saved.pull || []).map((name) => [name, "back"]),
     ...(saved.push || []).map((name) => [name, "chest"]),
   ];
   old.forEach(([name, fallback]) => {
-    const known = Object.keys(DEFAULT_EXERCISES).find((d) =>
-      DEFAULT_EXERCISES[d].includes(name)
-    );
-    const looksLikeArmsOrShoulders =
-      /curl|bicep|tricep|skull|pushdown|extension|shoulder|lateral|raise|arnold/i.test(
-        name
-      );
+    const muscle = musclesFor(name)[0];
     const day =
-      known || (looksLikeArmsOrShoulders ? "shoulders_arms" : fallback);
+      muscle === "back" || muscle === "chest"
+        ? muscle
+        : ["shoulders", "biceps", "triceps"].includes(muscle)
+        ? "shoulders_arms"
+        : fallback;
     if (!result[day].includes(name)) result[day].push(name);
-  });
-  // Keep the default ordering for known exercises, anything new goes last
-  Object.keys(result).forEach((d) => {
-    const order = (n) => {
-      const i = DEFAULT_EXERCISES[d].indexOf(n);
-      return i === -1 ? Infinity : i;
-    };
-    result[d].sort((a, b) => order(a) - order(b));
   });
   return result;
 };
@@ -225,15 +217,34 @@ const DEFAULT_SETTINGS = {
 const gymOf = (w) => w.gymId || FIRST_GYM;
 
 // Exercises that sat on the wrong day before body parts were sorted out
-const REGROUP = { Flys: "shoulders_arms", "Pec Rear Delts": "back" };
+const REGROUP = { Flys: "chest_shoulders", "Pec Rear Delts": "back" };
 
-// Fill in gyms and move regrouped exercises once, so later moves stick
-const tidyPrefs = (exercises, settings) => {
+// Chest and Shoulders & Arms days become Chest & Shoulders and Arms:
+// shoulder exercises follow chest, biceps and triceps go to arms
+const splitArmsDay = (exercises, added) => {
+  const { chest = [], shoulders_arms = [], ...rest } = exercises;
+  const chestShoulders = [...chest];
+  const arms = [];
+  shoulders_arms.forEach((name) => {
+    const muscle = musclesFor(name, added)[0];
+    (muscle === "biceps" || muscle === "triceps" ? arms : chestShoulders).push(name);
+  });
+  return { ...rest, chest_shoulders: chestShoulders, arms };
+};
+
+// Fill in gyms and days, and move regrouped exercises once, so later moves stick
+const tidyPrefs = (exercises, settings, added = {}) => {
   const s = { ...DEFAULT_SETTINGS, ...settings };
   if (!s.gyms?.length) s.gyms = DEFAULT_SETTINGS.gyms;
   if (!s.gyms.some((g) => g.id === s.defaultGymId)) s.defaultGymId = s.gyms[0].id;
-  if (s.regrouped) return { exercises, settings: s };
-  const ex = { ...exercises };
+  const ex =
+    !exercises.chest_shoulders && (exercises.chest || exercises.shoulders_arms)
+      ? splitArmsDay(exercises, added)
+      : { ...exercises };
+  Object.keys(DEFAULT_EXERCISES).forEach((d) => {
+    if (!ex[d]) ex[d] = DEFAULT_EXERCISES[d];
+  });
+  if (s.regrouped) return { exercises: ex, settings: s };
   Object.entries(REGROUP).forEach(([name, day]) => {
     const from = Object.keys(ex).find((d) => d !== day && (ex[d] || []).includes(name));
     if (!from) return;
@@ -246,7 +257,9 @@ const tidyPrefs = (exercises, settings) => {
 // Muscle workouts take their muscle's plate; custom plans and old push/pull
 // sessions share the white plate
 const toneFor = (type) =>
-  DAYS.find((d) => d.id === type)?.tone || muscleFromType(type)?.tone || "other";
+  [...DAYS, ...OLD_DAYS].find((d) => d.id === type)?.tone ||
+  muscleFromType(type)?.tone ||
+  "other";
 
 const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
 
@@ -410,7 +423,8 @@ export default function GymTracker() {
   const [boot] = useState(() =>
     tidyPrefs(
       migrateExercises(loadSaved("gymExercises", null)),
-      loadSaved("gymSettings", {})
+      loadSaved("gymSettings", {}),
+      loadSaved("gymMuscleExercises", {})
     )
   );
   const [exercises, setExercises] = useState(boot.exercises);
@@ -448,7 +462,11 @@ export default function GymTracker() {
 
   // Plans and settings as they come back from the account
   const applyPrefs = useCallback((remote) => {
-    const tidy = tidyPrefs(migrateExercises(remote.exercises || null), remote.settings || {});
+    const tidy = tidyPrefs(
+      migrateExercises(remote.exercises || null),
+      remote.settings || {},
+      remote.muscleExercises || {}
+    );
     const next = {
       exercises: tidy.exercises,
       customPlans: remote.customPlans || [],
@@ -917,7 +935,7 @@ export default function GymTracker() {
     setPlanToDelete(null);
   };
 
-  const getDay = (type) => DAYS.find((d) => d.id === type);
+  const getDay = (type) => [...DAYS, ...OLD_DAYS].find((d) => d.id === type);
 
   const getWorkoutLabel = (type) => {
     if (getDay(type)) return getDay(type).name;

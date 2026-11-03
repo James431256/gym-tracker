@@ -7,10 +7,10 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 - Dark ground (`--floor` #121211), with panels one step lighter (`--panel`, `--panel-2`). People use the app between sets at arm's length, in mixed gym lighting.
 - Colour comes from the plates and means something every time:
   - Back = blue plate (`--plate-blue`)
-  - Chest = red plate (`--plate-red`)
-  - Shoulders & Arms = yellow plate (`--plate-yellow`)
+  - Chest & Shoulders = red plate (`--plate-red`)
+  - Arms = yellow plate (`--plate-yellow`)
   - Custom plans, old Push/Pull sessions, and leg and core muscles = white plate (`--plate-white`)
-  - A muscle takes the plate of the day it's trained on: Chest red, Back blue, Shoulders, Biceps and Triceps yellow
+  - A muscle takes the plate of the day it's trained on: Chest and Shoulders red, Back blue, Biceps and Triceps yellow
   - Beat last time = green plate (`--plate-green`)
 - The primary button is the white 5 kg plate (`--plate-white`) with dark text. Use one per view.
 - Focus rings, the caret and text selection use yellow.

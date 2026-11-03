@@ -14,7 +14,8 @@ test('shows the workouts above the body parts on the train screen', () => {
   ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps'].forEach((name) =>
     expect(within(muscles).getByText(name)).toBeInTheDocument()
   );
-  expect(screen.getByText('Shoulders & Arms')).toBeInTheDocument();
+  expect(within(days).getByText('Chest & Shoulders')).toBeInTheDocument();
+  expect(within(days).getByText('Arms')).toBeInTheDocument();
 });
 
 test('picks biceps exercises, logs a set and saves the workout', () => {
@@ -70,15 +71,22 @@ test('sorts exercises onto muscles', () => {
   expect(exercisesForMuscle('biceps', {}, ['Squat'])).not.toContain('Squat');
 });
 
-test('moves Flys off chest day once, for lists saved before body parts were sorted', () => {
+test('splits the old Chest and Shoulders & Arms days into Chest & Shoulders and Arms', () => {
   localStorage.setItem(
     'gymExercises',
-    JSON.stringify({ back: ['Row'], chest: ['Flys', 'Chest Press Machine'], shoulders_arms: [] })
+    JSON.stringify({
+      back: ['Row'],
+      chest: ['Flys', 'Chest Press Machine'],
+      shoulders_arms: ['Lat Raises', 'Bicep Curls', 'Tricep Extensions'],
+    })
   );
   render(<App />);
   const saved = JSON.parse(localStorage.getItem('gymExercises'));
-  expect(saved.chest).toEqual(['Chest Press Machine']);
-  expect(saved.shoulders_arms).toEqual(['Flys']);
+  expect(saved).toEqual({
+    back: ['Row'],
+    chest_shoulders: ['Flys', 'Chest Press Machine', 'Lat Raises'],
+    arms: ['Bicep Curls', 'Tricep Extensions'],
+  });
   expect(JSON.parse(localStorage.getItem('gymSettings')).regrouped).toBe(true);
 });
 

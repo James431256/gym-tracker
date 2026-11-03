@@ -36,7 +36,7 @@ export const MUSCLES = [
   {
     id: "shoulders",
     name: "Shoulders",
-    tone: "arms",
+    tone: "chest",
     exercises: [
       "Shoulder Press",
       "Lat Raises",
