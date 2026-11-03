@@ -43,7 +43,7 @@ A workout in progress stays on the device you started it on until you tap **Fini
 
 | Table | One row per | Holds |
 | --- | --- | --- |
-| `workouts` | finished workout | type, date, and each exercise's sets as JSON |
-| `user_data` | person | plans, custom plans, settings, exercises added to muscles |
+| `workouts` | finished workout | type, date, gym, and each exercise's sets as JSON |
+| `user_data` | person | plans, custom plans, settings (including your gyms), exercises added to muscles |
 
 You can browse your data in Supabase's **Table Editor**.

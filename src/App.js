@@ -19,6 +19,7 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  MapPin,
 } from "lucide-react";
 import "./App.css";
 import {
@@ -28,8 +29,10 @@ import {
   muscleFromType,
   musclesFor,
   exercisesForMuscle,
+  assignMuscle,
 } from "./muscles";
 import { useCloudSync } from "./sync";
+import ProgressChart from "./ProgressChart";
 
 const loadSaved = (key, fallback) => {
   try {
@@ -47,7 +50,7 @@ const REP_MAX = 10;
 // Each day is a bumper plate colour (see DESIGN.md)
 const DAYS = [
   { id: "back", name: "Back", desc: "Lats, upper back, rear delts", tone: "back" },
-  { id: "chest", name: "Chest", desc: "Presses, flys", tone: "chest" },
+  { id: "chest", name: "Chest", desc: "Presses", tone: "chest" },
   {
     id: "shoulders_arms",
     name: "Shoulders & Arms",
@@ -69,12 +72,12 @@ const DEFAULT_EXERCISES = {
     "Chest Press Machine",
     "Cable Chest Exercise",
     "Chest Press (Hands Touch)",
-    "Flys",
   ],
   shoulders_arms: [
     "Shoulder Press",
     "Lat Raises",
     "Seatbelts",
+    "Flys",
     "Bicep Curls",
     "Preacher Curls",
     "Barbell Skull Crushers",
@@ -209,7 +212,36 @@ const TABS = [
   ["manage", "Plans", ClipboardList],
 ];
 
-const DEFAULT_SETTINGS = { defaultSets: 2, weightJump: 2.5 };
+// Workouts logged before gyms existed belong to the first gym
+const FIRST_GYM = "gym_main";
+
+const DEFAULT_SETTINGS = {
+  defaultSets: 2,
+  weightJump: 2.5,
+  gyms: [{ id: FIRST_GYM, name: "My gym" }],
+  defaultGymId: FIRST_GYM,
+};
+
+const gymOf = (w) => w.gymId || FIRST_GYM;
+
+// Exercises that sat on the wrong day before body parts were sorted out
+const REGROUP = { Flys: "shoulders_arms", "Pec Rear Delts": "back" };
+
+// Fill in gyms and move regrouped exercises once, so later moves stick
+const tidyPrefs = (exercises, settings) => {
+  const s = { ...DEFAULT_SETTINGS, ...settings };
+  if (!s.gyms?.length) s.gyms = DEFAULT_SETTINGS.gyms;
+  if (!s.gyms.some((g) => g.id === s.defaultGymId)) s.defaultGymId = s.gyms[0].id;
+  if (s.regrouped) return { exercises, settings: s };
+  const ex = { ...exercises };
+  Object.entries(REGROUP).forEach(([name, day]) => {
+    const from = Object.keys(ex).find((d) => d !== day && (ex[d] || []).includes(name));
+    if (!from) return;
+    ex[from] = ex[from].filter((n) => n !== name);
+    if (!(ex[day] || []).includes(name)) ex[day] = [...(ex[day] || []), name];
+  });
+  return { exercises: ex, settings: { ...s, regrouped: true } };
+};
 
 // Muscle workouts take their muscle's plate; custom plans and old push/pull
 // sessions share the white plate
@@ -375,13 +407,28 @@ export default function GymTracker() {
     loadSaved("gymCustomPlans", [])
   );
 
-  const [exercises, setExercises] = useState(() =>
-    migrateExercises(loadSaved("gymExercises", null))
+  const [boot] = useState(() =>
+    tidyPrefs(
+      migrateExercises(loadSaved("gymExercises", null)),
+      loadSaved("gymSettings", {})
+    )
   );
-  const [settings, setSettings] = useState(() => ({
-    ...DEFAULT_SETTINGS,
-    ...loadSaved("gymSettings", {}),
-  }));
+  const [exercises, setExercises] = useState(boot.exercises);
+  const [settings, setSettings] = useState(boot.settings);
+  // Every visit starts at the default gym, unless a workout is mid-way somewhere else
+  const [currentGymId, setCurrentGymId] = useState(
+    () => loadSaved("activeWorkout", null)?.gymId || boot.settings.defaultGymId
+  );
+  const [startGymId, setStartGymId] = useState(null);
+  const [showGymPicker, setShowGymPicker] = useState(false);
+  const [gymDraft, setGymDraft] = useState("");
+  const [gymToEdit, setGymToEdit] = useState(null);
+  const [gymToDelete, setGymToDelete] = useState(null);
+  const [newExercise, setNewExercise] = useState(null);
+  const [customPart, setCustomPart] = useState("");
+  const [addParts, setAddParts] = useState({});
+  const [chartExercise, setChartExercise] = useState("");
+  const [chartGymId, setChartGymId] = useState(null);
   // Exercises you've added to a muscle, by muscle id
   const [muscleExercises, setMuscleExercises] = useState(() =>
     loadSaved("gymMuscleExercises", {})
@@ -401,10 +448,11 @@ export default function GymTracker() {
 
   // Plans and settings as they come back from the account
   const applyPrefs = useCallback((remote) => {
+    const tidy = tidyPrefs(migrateExercises(remote.exercises || null), remote.settings || {});
     const next = {
-      exercises: migrateExercises(remote.exercises || null),
+      exercises: tidy.exercises,
       customPlans: remote.customPlans || [],
-      settings: { ...DEFAULT_SETTINGS, ...(remote.settings || {}) },
+      settings: tidy.settings,
       muscleExercises: remote.muscleExercises || {},
     };
     setExercises(next.exercises);
@@ -473,13 +521,24 @@ export default function GymTracker() {
     return [...new Set([...getYourExercises(), ...fromMuscles])].sort();
   };
 
-  // Past sessions of an exercise on any day, newest first
-  const getExerciseHistory = (exerciseName) =>
+  const gyms = settings.gyms;
+  const gymId = gyms.some((g) => g.id === currentGymId) ? currentGymId : settings.defaultGymId;
+  const gymName = (id) => gyms.find((g) => g.id === id)?.name || "Old gym";
+
+  const isKnownExercise = (name) => {
+    const lower = name.trim().toLowerCase();
+    return getAllKnownExercises().some((e) => e.toLowerCase() === lower);
+  };
+
+  // Past sessions of an exercise at one gym (any gym when null), newest first
+  const getExerciseHistory = (exerciseName, atGym = gymId) =>
     workouts
+      .filter((w) => atGym === null || gymOf(w) === atGym)
       .filter((w) => w.exercises.some((e) => e.name === exerciseName))
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .map((w) => ({
         date: w.date,
+        gymId: w.gymId,
         sets: w.exercises.find((e) => e.name === exerciseName).sets,
       }))
       .filter((h) => completedSets(h.sets).length);
@@ -487,6 +546,7 @@ export default function GymTracker() {
   // A muscle workout passes the exercises picked for it
   const handleWorkoutStart = (type, list = null) => {
     setPendingWorkoutType(type);
+    setStartGymId(gymId);
     setPendingList(list);
     const now = new Date();
     setSelectedDate(now.toISOString().split("T")[0]);
@@ -494,8 +554,12 @@ export default function GymTracker() {
     setShowDatePicker(true);
   };
 
-  const buildExerciseEntry = (exerciseName) => {
-    const history = getExerciseHistory(exerciseName);
+  const buildExerciseEntry = (exerciseName, atGym) => {
+    const history = getExerciseHistory(exerciseName, atGym);
+    // Weights don't carry between gyms, but show what you did elsewhere
+    const away = history.length
+      ? null
+      : getExerciseHistory(exerciseName, null).find((h) => gymOf(h) !== atGym);
     const last = history[0] || null;
     const rec = recommend(exerciseName, history, settings.weightJump);
     const lastSets = last ? completedSets(last.sets) : null;
@@ -515,6 +579,7 @@ export default function GymTracker() {
       lastSets,
       lastDate: last?.date || null,
       rec,
+      elsewhere: away ? { gym: gymName(gymOf(away)), sets: completedSets(away.sets) } : null,
     };
   };
 
@@ -524,7 +589,8 @@ export default function GymTracker() {
       exercises[type] ||
       customPlans.find((p) => p.id === type)?.exercises ||
       [];
-    const workoutExercises = list.map((n) => buildExerciseEntry(n));
+    const atGym = startGymId || gymId;
+    const workoutExercises = list.map((n) => buildExerciseEntry(n, atGym));
     const workoutDate =
       selectedDate && selectedTime
         ? new Date(`${selectedDate}T${selectedTime}`).toISOString()
@@ -533,8 +599,10 @@ export default function GymTracker() {
       id: Date.now(),
       type,
       date: workoutDate,
+      gymId: atGym,
       exercises: workoutExercises,
     });
+    setCurrentGymId(atGym);
     setScreen("workout");
     setPickerMuscle(muscleFromType(type)?.id || "all");
     setPendingList(null);
@@ -596,19 +664,14 @@ export default function GymTracker() {
     setShowAddExerciseModal(true);
   };
 
-  const insertExercise = (name) => {
-    const entry = buildExerciseEntry(name);
-    // A new exercise typed while a muscle is picked joins that muscle
-    if (
-      pickerMuscle !== "all" &&
-      !exercisesForMuscle(pickerMuscle, muscleExercises, getYourExercises()).some(
-        (e) => e.toLowerCase() === name.toLowerCase()
-      )
-    )
-      setMuscleExercises({
-        ...muscleExercises,
-        [pickerMuscle]: [...(muscleExercises[pickerMuscle] || []), name],
-      });
+  // A new exercise needs a body part: the filter picked, or ask
+  const insertExercise = (name, part = null) => {
+    const isNew = !isKnownExercise(name);
+    const muscle = part || (pickerMuscle !== "all" ? pickerMuscle : null);
+    if (isNew && !muscle) return setNewExercise(name);
+    if (isNew) setMuscleExercises(assignMuscle(muscleExercises, name, muscle));
+    setNewExercise(null);
+    const entry = buildExerciseEntry(name, gymOf(activeWorkout));
     setActiveWorkout((aw) => {
       const exs = [...aw.exercises];
       if (addExerciseAt === "end") {
@@ -665,10 +728,7 @@ export default function GymTracker() {
     const list = exercisesForMuscle(muscleId, muscleExercises, getYourExercises());
     const existing = list.find((e) => e.toLowerCase() === name.toLowerCase());
     if (!existing)
-      setMuscleExercises({
-        ...muscleExercises,
-        [muscleId]: [...(muscleExercises[muscleId] || []), name],
-      });
+      setMuscleExercises(assignMuscle(muscleExercises, name, muscleId));
     setMuscleSelection((sel) => (sel.includes(existing || name) ? sel : [...sel, existing || name]));
     setMuscleDraft("");
   };
@@ -735,10 +795,59 @@ export default function GymTracker() {
 
   const addExerciseToList = (type) => {
     const name = (addDrafts[type] || "").trim();
-    if (!name) return;
+    const part = addParts[type];
+    if (!name || !part) return;
     setExercises({ ...exercises, [type]: [...(exercises[type] || []), name] });
+    setMuscleExercises(assignMuscle(muscleExercises, name, part));
     setAddDrafts({ ...addDrafts, [type]: "" });
   };
+
+  const setExercisePart = (name, part) =>
+    setMuscleExercises(assignMuscle(muscleExercises, name, part));
+
+  const addGym = () => {
+    const name = gymDraft.trim();
+    if (!name) return;
+    const gym = { id: `gym_${Date.now()}`, name };
+    setSettings({ ...settings, gyms: [...gyms, gym] });
+    setGymDraft("");
+    return gym;
+  };
+
+  const renameGym = () => {
+    const name = gymToEdit.name.trim();
+    if (name)
+      setSettings({
+        ...settings,
+        gyms: gyms.map((g) => (g.id === gymToEdit.id ? { ...g, name } : g)),
+      });
+    setGymToEdit(null);
+  };
+
+  const deleteGym = (id) => {
+    const rest = gyms.filter((g) => g.id !== id);
+    setSettings({
+      ...settings,
+      gyms: rest,
+      defaultGymId: settings.defaultGymId === id ? rest[0].id : settings.defaultGymId,
+    });
+    if (currentGymId === id) setCurrentGymId(null);
+    setGymToDelete(null);
+  };
+
+  const partOf = (name) => musclesFor(name, muscleExercises)[0] || "";
+
+  const partOptions = (
+    <>
+      {MUSCLES.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.name}
+        </option>
+      ))}
+    </>
+  );
+
+  const gymWorkoutCount = (id) => workouts.filter((w) => gymOf(w) === id).length;
 
   const deleteExercise = (type, name) => {
     setExercises({
@@ -763,9 +872,15 @@ export default function GymTracker() {
   };
 
   const addCustomExercise = () => {
-    if (!customExerciseInput.trim()) return;
-    setCustomExercises([...customExercises, customExerciseInput.trim()]);
+    const name = customExerciseInput.trim();
+    if (!name) return;
+    if (!isKnownExercise(name)) {
+      if (!customPart) return setCustomError(`Pick which body part ${name} works.`);
+      setMuscleExercises(assignMuscle(muscleExercises, name, customPart));
+    }
+    setCustomExercises([...customExercises, name]);
     setCustomExerciseInput("");
+    setCustomPart("");
     setCustomError("");
   };
 
@@ -949,52 +1064,30 @@ export default function GymTracker() {
                     month: "long",
                   })}
                 </p>
+                <button
+                  className="gym-switch"
+                  onClick={() => setShowGymPicker(true)}
+                  aria-label={`Gym: ${gymName(gymId)}. Change gym`}
+                >
+                  <MapPin size={15} aria-hidden="true" />
+                  {gymName(gymId)}
+                  <ChevronRight size={15} aria-hidden="true" />
+                </button>
               </div>
             </div>
 
             {workouts.length === 0 && (
               <p className="hint" style={{ marginBottom: 14 }}>
-                Pick a muscle or a day to log your first session. Next time, the
+                Pick a workout or a body part to log your first session. Next time, the
                 app suggests your weights from the last one.
               </p>
             )}
 
-            {(() => {
-              const ago = startOfDay(new Date());
-              ago.setDate(ago.getDate() - 6);
-              const stats = getMuscleStats(ago);
-              return (
-                <section aria-labelledby="muscles-title">
-                  <div className="section-head">
-                    <h2 className="section-title" id="muscles-title">
-                      Pick a muscle
-                    </h2>
-                  </div>
-                  <div className="muscle-grid">
-                    {MUSCLES.map((m) => {
-                      const st = stats[m.id];
-                      return (
-                        <button key={m.id} className="muscle-tile" onClick={() => openMuscle(m.id)}>
-                          <Disc type={MUSCLE_TYPE_PREFIX + m.id} size={26} />
-                          <span className="muscle-name">{m.name}</span>
-                          <span className="muscle-sub">
-                            {st.last ? relativeDay(st.last) : "Not trained yet"}
-                          </span>
-                          {st.sets > 0 && (
-                            <span className="muscle-sub num">
-                              {plural(st.sets, "set")} this week
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })()}
-
-            <div className="section-head section">
-              <h2 className="section-title">Your days</h2>
+            <section aria-labelledby="workouts-title">
+            <div className="section-head">
+              <h2 className="section-title" id="workouts-title">
+                Workouts
+              </h2>
             </div>
             <div className="list">
               {plans.map((plan) => {
@@ -1025,6 +1118,41 @@ export default function GymTracker() {
                 New plan
               </button>
             </div>
+            </section>
+
+            {(() => {
+              const ago = startOfDay(new Date());
+              ago.setDate(ago.getDate() - 6);
+              const stats = getMuscleStats(ago);
+              return (
+                <section className="section" aria-labelledby="muscles-title">
+                  <div className="section-head">
+                    <h2 className="section-title" id="muscles-title">
+                      Body parts
+                    </h2>
+                  </div>
+                  <div className="muscle-grid">
+                    {MUSCLES.map((m) => {
+                      const st = stats[m.id];
+                      return (
+                        <button key={m.id} className="muscle-tile" onClick={() => openMuscle(m.id)}>
+                          <Disc type={MUSCLE_TYPE_PREFIX + m.id} size={26} />
+                          <span className="muscle-name">{m.name}</span>
+                          <span className="muscle-sub">
+                            {st.last ? relativeDay(st.last) : "Not trained yet"}
+                          </span>
+                          {st.sets > 0 && (
+                            <span className="muscle-sub num">
+                              {plural(st.sets, "set")} this week
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })()}
 
             {workouts.length > 0 && (
               <section className="section">
@@ -1041,6 +1169,7 @@ export default function GymTracker() {
                       <div className="row-main">
                         <div className="row-title">{getWorkoutLabel(w.type)}</div>
                         <div className="row-sub">
+                          {gyms.length > 1 && `${gymName(gymOf(w))} · `}
                           {plural(w.exercises.length, "exercise")} ·{" "}
                           {w.exercises.reduce((n, e) => n + completedSets(e.sets).length, 0)}{" "}
                           sets
@@ -1108,7 +1237,10 @@ export default function GymTracker() {
                       <ArrowLeft size={22} />
                     </button>
                     <Disc type={MUSCLE_TYPE_PREFIX + muscle.id} size={30} />
-                    <h1 className="page-title">{muscle.name}</h1>
+                    <div>
+                      <h1 className="page-title">{muscle.name}</h1>
+                      {gyms.length > 1 && <p className="page-meta">Weights at {gymName(gymId)}</p>}
+                    </div>
                   </div>
                 </div>
 
@@ -1421,6 +1553,97 @@ export default function GymTracker() {
                     </section>
 
                     {(() => {
+                      const atGym = gyms.some((g) => g.id === chartGymId) ? chartGymId : gymId;
+                      // Exercises done at this gym, most recent first
+                      const seen = new Map();
+                      workouts
+                        .filter((w) => gymOf(w) === atGym)
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .forEach((w) =>
+                          w.exercises.forEach((e) => {
+                            if (completedSets(e.sets).length && !seen.has(e.name))
+                              seen.set(e.name, w.date);
+                          })
+                        );
+                      const names = [...seen.keys()];
+                      const name = names.includes(chartExercise) ? chartExercise : names[0];
+                      const points = name
+                        ? getExerciseHistory(name, atGym)
+                            .reverse()
+                            .map((h) => {
+                              const sets = completedSets(h.sets);
+                              return {
+                                date: h.date,
+                                sets,
+                                weight: Math.max(...sets.map((st) => st.weight || 0)),
+                              };
+                            })
+                        : [];
+                      const best = points.length ? Math.max(...points.map((pt) => pt.weight)) : 0;
+                      return (
+                        <section className="section">
+                          <div className="section-head">
+                            <h2 className="section-title">Progress</h2>
+                          </div>
+                          {gyms.length > 1 && (
+                            <div className="filter-chips wrap" role="group" aria-label="Gym">
+                              {gyms.map((g) => (
+                                <button
+                                  key={g.id}
+                                  aria-pressed={atGym === g.id}
+                                  onClick={() => setChartGymId(g.id)}
+                                >
+                                  {g.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {names.length === 0 ? (
+                            <p className="hint" style={{ marginTop: 10 }}>
+                              No sessions at {gymName(atGym)} yet.
+                            </p>
+                          ) : (
+                            <div className="panel" style={{ marginTop: 10 }}>
+                              <select
+                                className="field"
+                                value={name}
+                                onChange={(e) => setChartExercise(e.target.value)}
+                                aria-label="Exercise"
+                                style={{ marginBottom: 12 }}
+                              >
+                                {names.map((n) => (
+                                  <option key={n} value={n}>
+                                    {n}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="progress-summary">
+                                <span>
+                                  First <strong>{points[0].weight} kg</strong>
+                                </span>
+                                <span>
+                                  Latest <strong>{points[points.length - 1].weight} kg</strong>
+                                </span>
+                                <span>
+                                  Best <strong>{best} kg</strong>
+                                </span>
+                              </div>
+                              <ProgressChart
+                                points={points}
+                                tone={getMuscle(partOf(name))?.tone || "other"}
+                              />
+                              <p className="hint" style={{ marginTop: 2, fontSize: 13 }}>
+                                Heaviest set each session.
+                                {/assist/i.test(name) && " Lower is better on assisted exercises."}
+                                {points.length === 1 && " Log it again to see a line."}
+                              </p>
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })()}
+
+                    {(() => {
                       const ago = startOfDay(new Date());
                       ago.setDate(ago.getDate() - 6);
                       const stats = getMuscleStats(ago);
@@ -1509,6 +1732,7 @@ export default function GymTracker() {
                     <div className="row-main">
                       <div className="row-title">{getWorkoutLabel(w.type)}</div>
                       <div className="row-sub">
+                        {gyms.length > 1 && `${gymName(gymOf(w))} · `}
                         {new Date(w.date).toLocaleDateString(undefined, {
                           weekday: "short",
                           day: "numeric",
@@ -1626,6 +1850,71 @@ export default function GymTracker() {
               )}
             </div>
 
+            <section className="section">
+              <div className="section-head">
+                <h2 className="section-title">Gyms</h2>
+              </div>
+              <div className="list">
+                {gyms.map((g) => (
+                  <div key={g.id} className="row" style={{ padding: "8px 6px 8px 16px" }}>
+                    <MapPin size={18} className="account-icon" aria-hidden="true" />
+                    <div className="row-main">
+                      <div className="row-title">{g.name}</div>
+                      <div className="row-sub">{plural(gymWorkoutCount(g.id), "workout")}</div>
+                    </div>
+                    {settings.defaultGymId === g.id ? (
+                      <span className="tag">Default</span>
+                    ) : (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setSettings({ ...settings, defaultGymId: g.id })}
+                      >
+                        Make default
+                      </button>
+                    )}
+                    <button
+                      className="icon-btn"
+                      onClick={() => setGymToEdit({ ...g })}
+                      aria-label={`Rename ${g.name}`}
+                    >
+                      <Pencil size={17} />
+                    </button>
+                    {gyms.length > 1 && (
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => setGymToDelete(g)}
+                        aria-label={`Delete ${g.name}`}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <form
+                  className="inline-add"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addGym();
+                  }}
+                >
+                  <input
+                    className="field"
+                    value={gymDraft}
+                    onChange={(e) => setGymDraft(e.target.value)}
+                    placeholder="Add a gym"
+                    aria-label="New gym name"
+                  />
+                  <button type="submit" className="btn btn-secondary">
+                    Add
+                  </button>
+                </form>
+              </div>
+              <p className="hint" style={{ marginTop: 8, fontSize: 13 }}>
+                The app opens at your default gym. Each gym keeps its own weights and
+                suggestions.
+              </p>
+            </section>
+
             <div className="list section">
               <div className="setting-row">
                 <div className="row-main">
@@ -1665,6 +1954,15 @@ export default function GymTracker() {
                   {(exercises[day.id] || []).map((ex, i) => (
                     <div key={i} className="row" style={{ padding: "6px 6px 6px 16px" }}>
                       <div className="row-main">{ex}</div>
+                      <select
+                        className={`part-select${partOf(ex) ? "" : " missing"}`}
+                        value={partOf(ex)}
+                        onChange={(e) => setExercisePart(ex, e.target.value)}
+                        aria-label={`Body part for ${ex}`}
+                      >
+                        {!partOf(ex) && <option value="">Body part…</option>}
+                        {partOptions}
+                      </select>
                       <button
                         className="icon-btn danger"
                         onClick={() => setExerciseToDelete({ type: day.id, name: ex })}
@@ -1675,7 +1973,7 @@ export default function GymTracker() {
                     </div>
                   ))}
                   <form
-                    className="inline-add"
+                    className="inline-add with-part"
                     onSubmit={(e) => {
                       e.preventDefault();
                       addExerciseToList(day.id);
@@ -1684,11 +1982,30 @@ export default function GymTracker() {
                     <input
                       className="field"
                       value={addDrafts[day.id] || ""}
-                      onChange={(e) => setAddDrafts({ ...addDrafts, [day.id]: e.target.value })}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setAddDrafts({ ...addDrafts, [day.id]: name });
+                        // Known exercises fill in their body part; you can still change it
+                        if (isKnownExercise(name)) setAddParts({ ...addParts, [day.id]: partOf(name.trim()) });
+                      }}
                       placeholder={ADD_PLACEHOLDERS[day.id]}
                       aria-label={`New ${day.name} exercise`}
                     />
-                    <button type="submit" className="btn btn-secondary">
+                    <select
+                      className={`part-select${addParts[day.id] ? "" : " missing"}`}
+                      value={addParts[day.id] || ""}
+                      onChange={(e) => setAddParts({ ...addParts, [day.id]: e.target.value })}
+                      aria-label="Body part"
+                      required
+                    >
+                      <option value="">Body part…</option>
+                      {partOptions}
+                    </select>
+                    <button
+                      type="submit"
+                      className="btn btn-secondary"
+                      disabled={!(addDrafts[day.id] || "").trim() || !addParts[day.id]}
+                    >
                       Add
                     </button>
                   </form>
@@ -1741,7 +2058,7 @@ export default function GymTracker() {
             // Workouts started before progression advice don't carry these yet
             const withHistory = activeWorkout.exercises.map((exercise) => {
               if (exercise.lastDate !== undefined) return exercise;
-              const history = getExerciseHistory(exercise.name);
+              const history = getExerciseHistory(exercise.name, gymOf(activeWorkout));
               return {
                 ...exercise,
                 rec: recommend(exercise.name, history, settings.weightJump),
@@ -1775,6 +2092,7 @@ export default function GymTracker() {
                       minute: "2-digit",
                     })}
                   </span>
+                  {gyms.length > 1 && <span>{gymName(gymOf(activeWorkout))}</span>}
                   <span>
                     {doneCount} of {setCount} sets logged
                   </span>
@@ -1838,8 +2156,17 @@ export default function GymTracker() {
                           !lastSets?.length && (
                             <p className="rec">
                               <span>
-                                First time: pick a weight you can do for {REP_MIN}–{REP_MAX}{" "}
-                                reps.
+                                {gyms.length > 1
+                                  ? `First time at ${gymName(gymOf(activeWorkout))}`
+                                  : "First time"}
+                                : pick a weight you can do for {REP_MIN}–{REP_MAX} reps.
+                                {exercise.elsewhere && (
+                                  <>
+                                    {" "}
+                                    At {exercise.elsewhere.gym}:{" "}
+                                    <span className="num">{formatSets(exercise.elsewhere.sets)}</span>.
+                                  </>
+                                )}
                               </span>
                             </p>
                           )
@@ -1932,12 +2259,21 @@ export default function GymTracker() {
       </main>
 
       {showAddExerciseModal && (
-        <Sheet title="Add exercise" onClose={() => setShowAddExerciseModal(false)}>
+        <Sheet
+          title="Add exercise"
+          onClose={() => {
+            setShowAddExerciseModal(false);
+            setNewExercise(null);
+          }}
+        >
           <input
             type="search"
             className="field"
             value={addExerciseSearch}
-            onChange={(e) => setAddExerciseSearch(e.target.value)}
+            onChange={(e) => {
+              setAddExerciseSearch(e.target.value);
+              setNewExercise(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && addExerciseSearch.trim())
                 insertExercise(filteredKnown[0] || addExerciseSearch.trim());
@@ -1957,6 +2293,18 @@ export default function GymTracker() {
               </button>
             ))}
           </div>
+          {newExercise && (
+            <div>
+              <p className="chips-label">Which body part does {newExercise} work?</p>
+              <div className="filter-chips wrap" role="group" aria-label={`Body part for ${newExercise}`}>
+                {MUSCLES.map((m) => (
+                  <button key={m.id} aria-pressed="false" onClick={() => insertExercise(newExercise, m.id)}>
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="pick-list" style={{ marginTop: 10 }}>
             {addExerciseSearch.trim() &&
               !filteredKnown.some(
@@ -2011,6 +2359,22 @@ export default function GymTracker() {
           }
         >
           <div className="stack">
+            {gyms.length > 1 && (
+              <div>
+                <span className="label">Gym</span>
+                <div className="filter-chips wrap" role="group" aria-label="Gym" style={{ marginTop: 0 }}>
+                  {gyms.map((g) => (
+                    <button
+                      key={g.id}
+                      aria-pressed={(startGymId || gymId) === g.id}
+                      onClick={() => setStartGymId(g.id)}
+                    >
+                      {g.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="hint">Change the date and time if you're logging a past session.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
               <div>
@@ -2108,13 +2472,32 @@ export default function GymTracker() {
                   id="plan-exercise"
                   className="field"
                   value={customExerciseInput}
-                  onChange={(e) => setCustomExerciseInput(e.target.value)}
+                  onChange={(e) => {
+                    setCustomExerciseInput(e.target.value);
+                    setCustomError("");
+                  }}
                   placeholder="Romanian Deadlift"
                 />
                 <button type="submit" className="btn btn-secondary" aria-label="Add exercise to plan">
                   <Plus size={18} />
                 </button>
               </form>
+              {customExerciseInput.trim() && !isKnownExercise(customExerciseInput) && (
+                <>
+                  <p className="chips-label">New exercise. Which body part does it work?</p>
+                  <div className="filter-chips wrap" role="group" aria-label="Body part">
+                    {MUSCLES.map((m) => (
+                      <button
+                        key={m.id}
+                        aria-pressed={customPart === m.id}
+                        onClick={() => setCustomPart(m.id)}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
               {customError && <p className="field-error">{customError}</p>}
             </div>
           </div>
@@ -2224,6 +2607,108 @@ export default function GymTracker() {
           onClose={() => setShowSignOut(false)}
         />
       )}
+
+      {showGymPicker && (
+        <Sheet title="Which gym?" onClose={() => setShowGymPicker(false)}>
+          <div className="pick-list">
+            {gyms.map((g) => (
+              <button
+                key={g.id}
+                className="pick"
+                aria-pressed={g.id === gymId}
+                onClick={() => {
+                  setCurrentGymId(g.id);
+                  setShowGymPicker(false);
+                }}
+              >
+                {g.id === gymId ? <Check size={16} aria-hidden="true" /> : <MapPin size={16} aria-hidden="true" />}
+                {g.name}
+                {g.id === settings.defaultGymId && <span className="tag" style={{ marginLeft: "auto" }}>Default</span>}
+              </button>
+            ))}
+          </div>
+          <form
+            className="inline-add"
+            style={{ padding: "12px 0 0" }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const gym = addGym();
+              if (gym) {
+                setCurrentGymId(gym.id);
+                setShowGymPicker(false);
+              }
+            }}
+          >
+            <input
+              className="field"
+              value={gymDraft}
+              onChange={(e) => setGymDraft(e.target.value)}
+              placeholder="Add a gym"
+              aria-label="New gym name"
+            />
+            <button type="submit" className="btn btn-secondary">
+              Add
+            </button>
+          </form>
+          <p className="hint" style={{ marginTop: 10, fontSize: 13 }}>
+            Next time the app opens at your default gym. Change it in Plans.
+          </p>
+        </Sheet>
+      )}
+
+      {gymToEdit && (
+        <Sheet
+          title="Rename gym"
+          onClose={() => setGymToEdit(null)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setGymToEdit(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit" form="gym-form">
+                Save
+              </button>
+            </>
+          }
+        >
+          <form
+            id="gym-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              renameGym();
+            }}
+          >
+            <label className="label" htmlFor="gym-name">
+              Name
+            </label>
+            <input
+              id="gym-name"
+              className="field"
+              value={gymToEdit.name}
+              onChange={(e) => setGymToEdit({ ...gymToEdit, name: e.target.value })}
+              autoFocus
+            />
+          </form>
+        </Sheet>
+      )}
+
+      {gymToDelete &&
+        (gymWorkoutCount(gymToDelete.id) > 0 ? (
+          <Sheet title={`Can't delete ${gymToDelete.name}`} onClose={() => setGymToDelete(null)}>
+            <p className="hint">
+              {plural(gymWorkoutCount(gymToDelete.id), "workout")} were logged there, and
+              they need it for their weights. You can rename it instead.
+            </p>
+          </Sheet>
+        ) : (
+          <ConfirmSheet
+            title={`Delete ${gymToDelete.name}?`}
+            body="No workouts were logged there, so nothing else changes."
+            confirmLabel="Delete gym"
+            onConfirm={() => deleteGym(gymToDelete.id)}
+            onClose={() => setGymToDelete(null)}
+          />
+        ))}
 
       {workoutToDelete && (
         <ConfirmSheet

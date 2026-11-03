@@ -9,9 +9,14 @@ create table if not exists public.workouts (
   type text not null,
   date timestamptz not null,
   exercises jsonb not null default '[]'::jsonb,
+  -- Which of your gyms (from settings.gyms) it was at; empty for older workouts
+  gym_id text,
   created_at timestamptz not null default now(),
   primary key (user_id, id)
 );
+
+-- Added after the first release, for projects set up before gyms
+alter table public.workouts add column if not exists gym_id text;
 
 create index if not exists workouts_user_date on public.workouts (user_id, date desc);
 

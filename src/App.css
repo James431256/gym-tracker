@@ -1479,3 +1479,170 @@ button.row:active {
     color: var(--text);
   }
 }
+
+/* ---------- Progress chart ---------- */
+
+.progress-chart {
+  position: relative;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.progress-chart svg {
+  display: block;
+}
+
+.pc-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.pc-axis {
+  fill: var(--text-3);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.pc-line {
+  fill: none;
+  stroke: var(--tone);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pc-dot {
+  fill: var(--tone);
+  stroke: var(--panel);
+  stroke-width: 2;
+  transition: r 150ms var(--ease-out);
+}
+
+.pc-cross {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.pc-value {
+  fill: var(--text);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pc-readout {
+  min-height: 22px;
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+.pc-readout .num {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 16px;
+}
+
+.pc-tip-date {
+  color: var(--text-2);
+}
+
+.progress-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.progress-summary strong {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+}
+
+/* ---------- Gyms and body parts ---------- */
+
+.gym-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 17px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.gym-switch svg {
+  color: var(--text-3);
+}
+
+.tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.part-select {
+  flex: none;
+  max-width: 46%;
+  height: 34px;
+  padding: 0 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.part-select:focus {
+  outline: none;
+  border-color: var(--plate-yellow);
+}
+
+.part-select.missing {
+  color: var(--text-3);
+}
+
+.inline-add.with-part {
+  flex-wrap: wrap;
+}
+
+.inline-add.with-part .field {
+  flex: 1 1 60%;
+}
+
+.inline-add.with-part .part-select {
+  height: 42px;
+  max-width: none;
+}
+
+.chips-label {
+  margin-top: 12px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.filter-chips.wrap {
+  flex-wrap: wrap;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow: visible;
+}
+
+select.field,
+.part-select {
+  font-family: var(--font);
+  color: var(--text);
+}

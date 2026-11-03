@@ -10,7 +10,6 @@ export const MUSCLES = [
       "Chest Press Machine",
       "Cable Chest Exercise",
       "Chest Press (Hands Touch)",
-      "Flys",
       "Bench Press",
       "Incline Dumbbell Press",
       "Dips",
@@ -31,6 +30,7 @@ export const MUSCLES = [
       "Single Arm Dumbbell Row",
       "Straight Arm Pulldown",
       "Deadlift",
+      "Pec Rear Delts",
     ],
   },
   {
@@ -41,7 +41,7 @@ export const MUSCLES = [
       "Shoulder Press",
       "Lat Raises",
       "Seatbelts",
-      "Pec Rear Delts",
+      "Flys",
       "Face Pulls",
       "Arnold Press",
       "Front Raises",
@@ -101,6 +101,7 @@ export const MUSCLES = [
 
 // Guesses for exercises the library doesn't know, checked in order
 const PATTERNS = [
+  ["back", /reverse pec|pec rear|rear delt/i],
   ["hamstrings", /hamstring|glute|hip thrust|rdl|romanian|leg curl/i],
   ["biceps", /curl|bicep/i],
   ["triceps", /tricep|skull|pushdown|\bdips?\b/i],
@@ -122,7 +123,7 @@ export const muscleFromType = (type) =>
     ? getMuscle(type.slice(MUSCLE_TYPE_PREFIX.length))
     : null;
 
-// Which muscles an exercise works: your own picks, then the library, then a guess
+// Which muscles an exercise works: your own pick, then the library, then a guess
 export const musclesFor = (name, added = {}) => {
   const lower = name.toLowerCase();
   const matches = (list) => (list || []).some((e) => e.toLowerCase() === lower);
@@ -147,6 +148,20 @@ export const exercisesForMuscle = (muscleId, added = {}, known = []) => {
     const key = name.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
-    return true;
+    // Moving a library exercise to another muscle takes it off this one
+    return musclesFor(name, added).includes(muscleId);
   });
+};
+
+// Put an exercise on one muscle only, replacing any earlier pick
+export const assignMuscle = (added, name, muscleId) => {
+  const lower = name.toLowerCase();
+  const next = Object.fromEntries(
+    Object.entries(added).map(([id, list]) => [
+      id,
+      (list || []).filter((e) => e.toLowerCase() !== lower),
+    ])
+  );
+  next[muscleId] = [...(next[muscleId] || []), name];
+  return next;
 };

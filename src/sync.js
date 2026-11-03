@@ -23,6 +23,7 @@ const toRow = (userId, w) => ({
   type: w.type,
   date: w.date,
   exercises: w.exercises,
+  gym_id: w.gymId ?? null,
 });
 
 // Ids were made with Date.now(), so turn them back into numbers
@@ -31,6 +32,7 @@ const fromRow = (r) => ({
   type: r.type,
   date: r.date,
   exercises: r.exercises || [],
+  ...(r.gym_id ? { gymId: r.gym_id } : {}),
 });
 
 const authMessage = (err) =>
@@ -118,7 +120,7 @@ export function useCloudSync({ workouts, setWorkouts, prefs, setPrefs, clearLoca
         if (pull) {
           const [{ data: rows, error: wErr }, { data: prefRow, error: pErr }] =
             await Promise.all([
-              supabase.from("workouts").select("id, type, date, exercises"),
+              supabase.from("workouts").select("id, type, date, exercises, gym_id"),
               supabase.from("user_data").select("*").maybeSingle(),
             ]);
           if (wErr) throw wErr;
