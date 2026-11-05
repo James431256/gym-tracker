@@ -1777,20 +1777,11 @@ export default function GymTracker() {
                     )}
                     {w.exercises.map((ex, i) => {
                       const done = completedSets(ex.sets);
-                      const top = done.reduce(
-                        (best, s) => ((s.weight || 0) > (best.weight || 0) ? s : best),
-                        done[0] || { weight: 0, reps: 0 }
-                      );
                       return (
                         <div key={i} className="session-line">
                           <span>{ex.name}</span>
                           {done.length ? (
-                            <span>
-                              {top.weight} × {top.reps}
-                              <span style={{ color: "var(--text-3)" }}>
-                                {" "}· {done.length} {done.length === 1 ? "set" : "sets"}
-                              </span>
-                            </span>
+                            <span>{formatSets(done)}</span>
                           ) : (
                             <span style={{ color: "var(--text-3)" }}>Skipped</span>
                           )}
