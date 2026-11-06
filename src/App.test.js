@@ -35,6 +35,10 @@ test('picks biceps exercises, logs a set and saves the workout', () => {
   userEvent.type(preacher.getByLabelText('Set 1 reps'), '10');
   userEvent.click(screen.getByRole('button', { name: 'Finish' }));
 
+  // Three sets have no reps, so it checks first, then leaves them out
+  expect(screen.getByRole('dialog', { name: /3 sets not logged/i })).toBeInTheDocument();
+  userEvent.click(screen.getByRole('button', { name: /finish anyway/i }));
+
   // Back on the muscle page with the set showing as last time
   expect(screen.getByRole('heading', { name: 'Biceps' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /preacher curls/i })).toHaveTextContent(
@@ -46,10 +50,7 @@ test('picks biceps exercises, logs a set and saves the workout', () => {
   expect(saved[0].exercises[0]).toEqual({
     id: expect.any(Number),
     name: 'Preacher Curls',
-    sets: [
-      { weight: 20, reps: 10 },
-      { weight: 0, reps: 0 },
-    ],
+    sets: [{ weight: 20, reps: 10 }],
   });
 });
 
@@ -127,6 +128,7 @@ test('keeps weights separate for each gym and opens at the default gym', () => {
   userEvent.click(screen.getByRole('button', { name: /start biceps/i }));
   userEvent.click(screen.getByRole('button', { name: /start workout/i }));
   userEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  userEvent.click(screen.getByRole('button', { name: /finish anyway/i }));
   expect(JSON.parse(localStorage.getItem('gymWorkouts'))[0].gymId).toBe('gym_2');
 });
 
@@ -147,4 +149,67 @@ test('asks which body part a new exercise works before adding it', () => {
   userEvent.click(within(parts).getByRole('button', { name: 'Triceps' }));
   expect(screen.getByRole('region', { name: 'Zottman Thing' })).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem('gymMuscleExercises')).triceps).toEqual(['Zottman Thing']);
+});
+
+const seed = (sets, name = 'Bicep Curls') =>
+  localStorage.setItem(
+    'gymWorkouts',
+    JSON.stringify([
+      {
+        id: 1,
+        type: 'muscle:biceps',
+        date: '2026-10-01T10:00:00Z',
+        exercises: [{ id: 1, name, sets: sets.map(([weight, reps]) => ({ weight, reps })) }],
+      },
+    ])
+  );
+
+test('stays at the same weight when only a later set drops off', () => {
+  seed([[20, 10], [20, 4]]);
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  expect(screen.getByRole('button', { name: /bicep curls/i })).toHaveTextContent(/Stay at 20 kg/);
+});
+
+test('still drops the weight when the first set falls well short', () => {
+  seed([[20, 4], [20, 3]]);
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  expect(screen.getByRole('button', { name: /bicep curls/i })).toHaveTextContent(/Drop to 17\.5 kg/);
+});
+
+test('finishes straight away when every set is logged', () => {
+  seed([[20, 10]]);
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /bicep curls/i }));
+  userEvent.click(screen.getByRole('button', { name: /start biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  const curls = within(screen.getByRole('region', { name: 'Bicep Curls' }));
+  userEvent.type(curls.getByLabelText('Set 1 reps'), '10');
+  userEvent.type(curls.getByLabelText('Set 2 reps'), '9');
+  userEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem('gymWorkouts'))).toHaveLength(2);
+});
+
+test('edits the weights, reps and sets of a past workout', () => {
+  seed([[20, 10], [20, 8]]);
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'History' })[0]);
+  userEvent.click(screen.getByRole('button', { name: /edit biceps workout/i }));
+
+  const reps2 = screen.getByLabelText('Bicep Curls set 2 reps');
+  userEvent.clear(reps2);
+  userEvent.type(reps2, '9');
+  userEvent.click(screen.getByRole('button', { name: /add set/i }));
+  userEvent.type(screen.getByLabelText('Bicep Curls set 3 reps'), '7');
+  userEvent.click(screen.getByRole('button', { name: /remove bicep curls set 1/i }));
+  userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+  expect(JSON.parse(localStorage.getItem('gymWorkouts'))[0].exercises[0].sets).toEqual([
+    { weight: 20, reps: 9 },
+    { weight: 20, reps: 7 },
+  ]);
+  expect(screen.getByText('20×9, 20×7')).toBeInTheDocument();
 });

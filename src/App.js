@@ -123,7 +123,8 @@ const roundWeight = (w) => Math.max(0, Math.round(w * 100) / 100);
 // Double progression on an 8-10 rep range:
 // - every set at the same weight hit 10+ reps -> add the smallest weight jump
 // - every set within 8-10 -> same weight, chase 10 on every set
-// - fell short of 8 -> same weight, unless it's well short or the second
+// - first set in range but a later set fell short -> same weight, rest longer
+// - first set short of 8 -> same weight, unless it's well short or the second
 //   session in a row below 8, then drop the weight
 const recommend = (exerciseName, history, jump) => {
   const sets = completedSets(history[0]?.sets);
@@ -145,6 +146,13 @@ const recommend = (exerciseName, history, jump) => {
     };
 
   if (minReps < REP_MIN) {
+    // First set in range but a later one fell away: that's rest, not the weight
+    if (sets.length > 1 && sets[0].reps >= REP_MIN)
+      return {
+        action: "stay",
+        weight,
+        reason: "Rest 2–3 min so later sets hold up",
+      };
     const prev = completedSets(history[1]?.sets);
     const shortTwiceInARow =
       prev.length &&
@@ -402,6 +410,8 @@ export default function GymTracker() {
   const [workoutToDelete, setWorkoutToDelete] = useState(null);
   const [planToDelete, setPlanToDelete] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [emptySetCount, setEmptySetCount] = useState(0);
+  const [editing, setEditing] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
@@ -704,11 +714,22 @@ export default function GymTracker() {
     setAddExerciseAt(null);
   };
 
-  const finishWorkout = () => {
+  const countEmptySets = (w) =>
+    w.exercises.reduce((n, ex) => n + ex.sets.filter((st) => !st.reps).length, 0);
+
+  // Sets with no reps get a check first, then are left out
+  const finishWorkout = (confirmed = false) => {
+    const empty = countEmptySets(activeWorkout);
+    if (empty && !confirmed) return setEmptySetCount(empty);
+    setEmptySetCount(0);
     // Advice and last-time figures are worked out fresh each session, so only keep the sets
     const done = {
       ...activeWorkout,
-      exercises: activeWorkout.exercises.map(({ id, name, sets }) => ({ id, name, sets })),
+      exercises: activeWorkout.exercises.map(({ id, name, sets }) => ({
+        id,
+        name,
+        sets: completedSets(sets),
+      })),
     };
     setWorkouts([done, ...workouts]);
     cloud.saveWorkout(done);
@@ -720,6 +741,29 @@ export default function GymTracker() {
     setActiveWorkout(null);
     setShowCancelModal(false);
     setScreen("home");
+  };
+
+  // Editing a past workout works on a copy until you save
+  const startEditing = (w) =>
+    setEditing({
+      ...w,
+      exercises: w.exercises.map((ex) => ({ ...ex, sets: ex.sets.map((st) => ({ ...st })) })),
+    });
+
+  const changeEditing = (exIdx, change) =>
+    setEditing((e) => ({
+      ...e,
+      exercises: e.exercises.map((ex, i) => (i === exIdx ? { ...ex, sets: change(ex.sets) } : ex)),
+    }));
+
+  const saveEditing = () => {
+    const updated = {
+      ...editing,
+      exercises: editing.exercises.map((ex) => ({ ...ex, sets: completedSets(ex.sets) })),
+    };
+    setWorkouts(workouts.map((w) => (w.id === updated.id ? updated : w)));
+    cloud.saveWorkout(updated);
+    setEditing(null);
   };
 
   const deleteWorkout = (id) => {
@@ -1039,7 +1083,7 @@ export default function GymTracker() {
                   <span>{getWorkoutLabel(activeWorkout.type)}</span>
                 </div>
               )}
-              <button className="btn btn-primary btn-sm" onClick={finishWorkout}>
+              <button className="btn btn-primary btn-sm" onClick={() => finishWorkout()}>
                 Finish
               </button>
             </>
@@ -1711,6 +1755,8 @@ export default function GymTracker() {
                         {REP_MIN}–{REP_MAX - 1} reps
                       </dt>
                       <dd>Same weight, add a rep where you can.</dd>
+                      <dt>Later set drops</dt>
+                      <dd>First set {REP_MIN}+ but a later one falls short: same weight, rest longer.</dd>
                       <dt>Under {REP_MIN} twice</dt>
                       <dd>Drop the weight a step.</dd>
                       <dt>Rest</dt>
@@ -1763,6 +1809,13 @@ export default function GymTracker() {
                         })}
                       </div>
                     </div>
+                    <button
+                      className="icon-btn"
+                      onClick={() => startEditing(w)}
+                      aria-label={`Edit ${getWorkoutLabel(w.type)} workout`}
+                    >
+                      <Pencil size={17} />
+                    </button>
                     <button
                       className="icon-btn danger"
                       onClick={() => setWorkoutToDelete(w)}
@@ -2339,6 +2392,113 @@ export default function GymTracker() {
             )}
           </div>
         </Sheet>
+      )}
+
+      {editing && (
+        <Sheet
+          title={`Edit ${getWorkoutLabel(editing.type)}`}
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setEditing(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={saveEditing}>
+                Save changes
+              </button>
+            </>
+          }
+        >
+          <div className="stack">
+            <p className="hint">
+              {new Date(editing.date).toLocaleDateString(undefined, {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+              })}
+              . Sets left without reps are removed when you save.
+            </p>
+            {editing.exercises.map((ex, exIdx) => (
+              <section key={exIdx} aria-label={`Edit ${ex.name}`}>
+                <div className="row-title" style={{ marginBottom: 6 }}>
+                  {ex.name}
+                </div>
+                {ex.sets.map((st, setIdx) => (
+                  <div key={setIdx} className="edit-set">
+                    <span className="set-no">{setIdx + 1}</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.5"
+                      className="num-input"
+                      value={st.weight || ""}
+                      placeholder="kg"
+                      aria-label={`${ex.name} set ${setIdx + 1} weight in kg`}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) =>
+                        changeEditing(exIdx, (sets) =>
+                          sets.map((x, i) =>
+                            i === setIdx ? { ...x, weight: parseFloat(e.target.value) || 0 } : x
+                          )
+                        )
+                      }
+                    />
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      className="num-input"
+                      value={st.reps || ""}
+                      placeholder="reps"
+                      aria-label={`${ex.name} set ${setIdx + 1} reps`}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) =>
+                        changeEditing(exIdx, (sets) =>
+                          sets.map((x, i) =>
+                            i === setIdx ? { ...x, reps: parseFloat(e.target.value) || 0 } : x
+                          )
+                        )
+                      }
+                    />
+                    <button
+                      className="icon-btn danger"
+                      onClick={() => changeEditing(exIdx, (sets) => sets.filter((_, i) => i !== setIdx))}
+                      aria-label={`Remove ${ex.name} set ${setIdx + 1}`}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="add-set"
+                  onClick={() =>
+                    changeEditing(exIdx, (sets) => {
+                      const last = sets[sets.length - 1];
+                      return [...sets, { weight: last?.weight || 0, reps: 0 }];
+                    })
+                  }
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  Add set
+                </button>
+              </section>
+            ))}
+          </div>
+        </Sheet>
+      )}
+
+      {emptySetCount > 0 && (
+        <ConfirmSheet
+          title={`${plural(emptySetCount, "set")} not logged`}
+          body={`${
+            emptySetCount === 1 ? "One set has" : `${emptySetCount} sets have`
+          } no reps. Finish anyway and ${
+            emptySetCount === 1 ? "it's" : "they're"
+          } left out, or go back and log ${emptySetCount === 1 ? "it" : "them"}.`}
+          cancelLabel="Keep logging"
+          confirmLabel="Finish anyway"
+          onConfirm={() => finishWorkout(true)}
+          onClose={() => setEmptySetCount(0)}
+        />
       )}
 
       {showCancelModal && (

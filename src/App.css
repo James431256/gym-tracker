@@ -1646,3 +1646,13 @@ select.field,
   font-family: var(--font);
   color: var(--text);
 }
+
+/* ---------- Editing a past workout ---------- */
+
+.edit-set {
+  display: grid;
+  grid-template-columns: 24px 1fr 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
