@@ -45,6 +45,19 @@ jest.mock('./supabase', () => {
           return { error: null };
         },
         signUp: async () => ({ data: { session: null }, error: null }),
+        resetPasswordForEmail: async (email) => {
+          db.resetFor = email;
+          return { error: null };
+        },
+        // Opening the emailed link signs you in and fires PASSWORD_RECOVERY
+        mockOpenResetLink: () => {
+          db.session = { user };
+          listeners.forEach((cb) => cb('PASSWORD_RECOVERY', db.session));
+        },
+        updateUser: async ({ password }) => {
+          db.newPassword = password;
+          return { data: { user }, error: null };
+        },
         signOut: async () => {
           db.session = null;
           listeners.forEach((cb) => cb('SIGNED_OUT', null));
@@ -55,7 +68,7 @@ jest.mock('./supabase', () => {
   };
 });
 
-const { mockDb: db } = require('./supabase');
+const { mockDb: db, supabase: mockSupabase } = require('./supabase');
 
 const workout = (id, name, date) => ({
   id,
@@ -136,4 +149,23 @@ test('keeps deletes made offline and uploads them when back online', async () =>
   await waitFor(() => expect(db.workouts).toHaveLength(0));
   expect(JSON.parse(localStorage.getItem('gymSyncQueue'))).toEqual([]);
   expect(screen.queryByText('Hammer Curls')).not.toBeInTheDocument();
+});
+
+test('resets a forgotten password from the emailed link', async () => {
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: 'Plans' }));
+  userEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+  userEvent.click(screen.getByRole('button', { name: /forgot password/i }));
+  expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+  userEvent.type(screen.getByLabelText('Email'), 'lifter@example.com');
+  userEvent.click(screen.getByRole('button', { name: 'Send link' }));
+  expect(await screen.findByText(/check your inbox/i)).toBeInTheDocument();
+  expect(db.resetFor).toBe('lifter@example.com');
+
+  userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  act(() => mockSupabase.auth.mockOpenResetLink());
+  userEvent.type(await screen.findByLabelText('New password'), 'newpass99');
+  userEvent.click(screen.getByRole('button', { name: 'Save password' }));
+  await waitFor(() => expect(screen.queryByLabelText('New password')).not.toBeInTheDocument());
+  expect(db.newPassword).toBe('newpass99');
 });

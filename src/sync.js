@@ -55,6 +55,8 @@ export function useCloudSync({ workouts, setWorkouts, prefs, setPrefs, clearLoca
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(0);
+  // True after opening a password reset link, until a new password is set
+  const [recovering, setRecovering] = useState(false);
 
   const queue = useRef(read(QUEUE_KEY, []));
   const prefsDirty = useRef(read(PREFS_DIRTY_KEY, false));
@@ -166,8 +168,9 @@ export function useCloudSync({ workouts, setWorkouts, prefs, setPrefs, clearLoca
       setUser(data.session?.user ?? null);
       setReady(true);
     });
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
+      if (event === "PASSWORD_RECOVERY") setRecovering(true);
     });
     return () => data.subscription.unsubscribe();
   }, []);
@@ -238,6 +241,23 @@ export function useCloudSync({ workouts, setWorkouts, prefs, setPrefs, clearLoca
     return data.session ? {} : { notice: "Check your inbox to confirm your email, then sign in." };
   };
 
+  // The email links back to this page, which then asks for a new password
+  const resetPassword = async (email) => {
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    return err
+      ? { error: authMessage(err) }
+      : { notice: "Check your inbox for a link to set a new password." };
+  };
+
+  const setNewPassword = async (password) => {
+    const { error: err } = await supabase.auth.updateUser({ password });
+    if (err) return authMessage(err);
+    setRecovering(false);
+    return null;
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     queue.current = [];
@@ -261,5 +281,9 @@ export function useCloudSync({ workouts, setWorkouts, prefs, setPrefs, clearLoca
     signIn,
     signUp,
     signOut,
+    resetPassword,
+    setNewPassword,
+    recovering,
+    cancelRecovery: () => setRecovering(false),
   };
 }

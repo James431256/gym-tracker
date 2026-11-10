@@ -213,3 +213,19 @@ test('edits the weights, reps and sets of a past workout', () => {
   ]);
   expect(screen.getByText('20×9, 20×7')).toBeInTheDocument();
 });
+
+test('pre-fills the weight but leaves reps for you to type', () => {
+  seed([[20, 9], [20, 8]]);
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /bicep curls/i }));
+  userEvent.click(screen.getByRole('button', { name: /start biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  const curls = within(screen.getByRole('region', { name: 'Bicep Curls' }));
+  expect(curls.getByLabelText('Set 1 weight in kg')).toHaveValue(20);
+  expect(curls.getByLabelText('Set 1 reps')).toHaveValue(null);
+  expect(curls.getByLabelText('Set 2 reps')).toHaveValue(null);
+  // Forgetting them is caught at Finish
+  userEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  expect(screen.getByRole('dialog', { name: /2 sets not logged/i })).toBeInTheDocument();
+});

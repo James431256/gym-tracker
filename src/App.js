@@ -464,6 +464,8 @@ export default function GymTracker() {
   const [pickerMuscle, setPickerMuscle] = useState("all");
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
+  const [newPassword, setNewPasswordDraft] = useState("");
+  const [newPasswordError, setNewPasswordError] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState(null);
@@ -591,14 +593,11 @@ export default function GymTracker() {
     const last = history[0] || null;
     const rec = recommend(exerciseName, history, settings.weightJump);
     const lastSets = last ? completedSets(last.sets) : null;
-    // Pre-fill the recommended weight; keep last reps only when the weight is unchanged
+    // Pre-fill the recommended weight only. Reps start blank so every set is
+    // something you typed, and Finish can spot any you forgot
     const sets = Array.from({ length: settings.defaultSets }, (_, i) => {
       const prev = lastSets?.[i] || lastSets?.[lastSets.length - 1];
-      const weight = rec ? rec.weight : prev?.weight || 0;
-      return {
-        weight,
-        reps: prev && prev.weight === weight ? prev.reps : 0,
-      };
+      return { weight: rec ? rec.weight : prev?.weight || 0, reps: 0 };
     });
     return {
       id: Date.now() + Math.random(),
@@ -660,10 +659,7 @@ export default function GymTracker() {
         const last = ex.sets[ex.sets.length - 1];
         return {
           ...ex,
-          sets: [
-            ...ex.sets,
-            { weight: last?.weight || 0, reps: last?.reps || 0 },
-          ],
+          sets: [...ex.sets, { weight: last?.weight || 0, reps: 0 }],
         };
       }),
     }));
@@ -831,6 +827,13 @@ export default function GymTracker() {
   const submitAuth = async (e) => {
     e.preventDefault();
     const email = authEmail.trim();
+    if (authMode === "reset") {
+      if (!email) return setAuthMessage({ error: "Enter your email." });
+      setAuthBusy(true);
+      setAuthMessage(await cloud.resetPassword(email));
+      setAuthBusy(false);
+      return;
+    }
     if (!email || !authPassword)
       return setAuthMessage({ error: "Enter your email and a password." });
     setAuthBusy(true);
@@ -853,7 +856,21 @@ export default function GymTracker() {
     setShowAuth(false);
     setAuthPassword("");
     setAuthMessage(null);
+    if (authMode === "reset") setAuthMode("signin");
   };
+
+  const submitNewPassword = async (e) => {
+    e.preventDefault();
+    if (newPassword.length < 6) return setNewPasswordError("Use at least 6 characters.");
+    setAuthBusy(true);
+    const error = await cloud.setNewPassword(newPassword);
+    setAuthBusy(false);
+    if (error) return setNewPasswordError(error);
+    setNewPasswordDraft("");
+    setNewPasswordError("");
+  };
+
+  const AUTH_TITLE = { signin: "Sign in", signup: "Create account", reset: "Reset password" };
 
   const addExerciseToList = (type) => {
     const name = (addDrafts[type] || "").trim();
@@ -2697,7 +2714,7 @@ export default function GymTracker() {
 
       {showAuth && (
         <Sheet
-          title={authMode === "signin" ? "Sign in" : "Create account"}
+          title={AUTH_TITLE[authMode]}
           onClose={closeAuth}
           footer={
             <>
@@ -2705,7 +2722,7 @@ export default function GymTracker() {
                 Cancel
               </button>
               <button className="btn btn-primary" type="submit" form="auth-form" disabled={authBusy}>
-                {authBusy ? "One sec…" : authMode === "signin" ? "Sign in" : "Create account"}
+                {authBusy ? "One sec…" : authMode === "reset" ? "Send link" : AUTH_TITLE[authMode]}
               </button>
             </>
           }
@@ -2714,6 +2731,8 @@ export default function GymTracker() {
             <p className="hint">
               {authMode === "signin"
                 ? "Your workouts, plans and settings sync to your account."
+                : authMode === "reset"
+                ? "We'll email you a link. Open it on this device to choose a new password."
                 : "Workouts already on this device upload to the new account."}
             </p>
             <div>
@@ -2729,23 +2748,43 @@ export default function GymTracker() {
                 onChange={(e) => setAuthEmail(e.target.value)}
                 autoFocus
               />
+              {authMode === "reset" && authMessage?.error && (
+                <p className="field-error">{authMessage.error}</p>
+              )}
+              {authMode === "reset" && authMessage?.notice && (
+                <p className="field-note">{authMessage.notice}</p>
+              )}
             </div>
-            <div>
-              <label className="label" htmlFor="auth-password">
-                Password
-              </label>
-              <input
-                id="auth-password"
-                type="password"
-                autoComplete={authMode === "signin" ? "current-password" : "new-password"}
-                minLength={6}
-                className="field"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-              />
-              {authMessage?.error && <p className="field-error">{authMessage.error}</p>}
-              {authMessage?.notice && <p className="field-note">{authMessage.notice}</p>}
-            </div>
+            {authMode !== "reset" && (
+              <div>
+                <label className="label" htmlFor="auth-password">
+                  Password
+                </label>
+                <input
+                  id="auth-password"
+                  type="password"
+                  autoComplete={authMode === "signin" ? "current-password" : "new-password"}
+                  minLength={6}
+                  className="field"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                />
+                {authMessage?.error && <p className="field-error">{authMessage.error}</p>}
+                {authMessage?.notice && <p className="field-note">{authMessage.notice}</p>}
+              </div>
+            )}
+            {authMode === "signin" && (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setAuthMode("reset");
+                  setAuthMessage(null);
+                }}
+              >
+                Forgot password?
+              </button>
+            )}
             <button
               type="button"
               className="link-btn"
@@ -2756,6 +2795,46 @@ export default function GymTracker() {
             >
               {authMode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
             </button>
+          </form>
+        </Sheet>
+      )}
+
+      {cloud.recovering && (
+        <Sheet
+          title="Set a new password"
+          onClose={cloud.cancelRecovery}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={cloud.cancelRecovery}>
+                Not now
+              </button>
+              <button className="btn btn-primary" type="submit" form="new-password-form" disabled={authBusy}>
+                {authBusy ? "One sec…" : "Save password"}
+              </button>
+            </>
+          }
+        >
+          <form id="new-password-form" className="stack" onSubmit={submitNewPassword}>
+            <p className="hint">You're signed in from the reset link. Choose a new password for next time.</p>
+            <div>
+              <label className="label" htmlFor="new-password">
+                New password
+              </label>
+              <input
+                id="new-password"
+                type="password"
+                autoComplete="new-password"
+                minLength={6}
+                className="field"
+                value={newPassword}
+                onChange={(e) => {
+                  setNewPasswordDraft(e.target.value);
+                  setNewPasswordError("");
+                }}
+                autoFocus
+              />
+              {newPasswordError && <p className="field-error">{newPasswordError}</p>}
+            </div>
           </form>
         </Sheet>
       )}
