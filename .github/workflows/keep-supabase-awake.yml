@@ -1,0 +1,31 @@
+# Free Supabase projects pause after a quiet week. This makes one tiny
+# request a day so syncing keeps working even when you take time off.
+# It calls keep_alive() (see supabase/schema.sql), which only returns the time.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # every day at 06:17 UTC
+  workflow_dispatch: # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .env
+          sparse-checkout-cone-mode: false
+      - name: Call keep_alive
+        run: |
+          # The project URL and publishable key are already public in .env
+          set -a; . ./.env; set +a
+          curl -fsS --retry 3 --retry-delay 10 -X POST \
+            "$REACT_APP_SUPABASE_URL/rest/v1/rpc/keep_alive" \
+            -H "apikey: $REACT_APP_SUPABASE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'

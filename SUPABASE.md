@@ -39,6 +39,12 @@ The free plan's built-in email sender only sends a few emails an hour, so if a c
 
 A workout in progress stays on the device you started it on until you tap **Finish**.
 
+## Staying awake
+
+Free Supabase projects pause after a week with little database activity. The **Keep Supabase awake** GitHub Action (`.github/workflows/keep-supabase-awake.yml`) calls a small `keep_alive()` function once a day so that doesn't happen. You can see its runs, or run it by hand, under the repo's **Actions** tab.
+
+If the project does get paused, the app keeps working on your phone. Resume the project from the Supabase dashboard and anything waiting uploads.
+
 ## Tables
 
 | Table | One row per | Holds |

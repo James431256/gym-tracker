@@ -47,3 +47,15 @@ create policy "Own data" on public.user_data
 
 grant select, insert, update, delete on public.workouts to authenticated;
 grant select, insert, update, delete on public.user_data to authenticated;
+
+-- Called once a day by .github/workflows/keep-supabase-awake.yml so the
+-- free-plan project isn't paused after a quiet week. Reads and changes nothing.
+create or replace function public.keep_alive()
+returns timestamptz
+language sql
+stable
+set search_path = ''
+as $$ select now() $$;
+
+revoke execute on function public.keep_alive() from public;
+grant execute on function public.keep_alive() to anon, authenticated;
