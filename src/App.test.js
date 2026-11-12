@@ -229,3 +229,28 @@ test('pre-fills the weight but leaves reps for you to type', () => {
   userEvent.click(screen.getByRole('button', { name: 'Finish' }));
   expect(screen.getByRole('dialog', { name: /2 sets not logged/i })).toBeInTheDocument();
 });
+
+test('saves the workout as the default list for its day', () => {
+  render(<App />);
+  userEvent.click(screen.getByText('Arms'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  userEvent.click(screen.getByRole('button', { name: /remove preacher curls/i }));
+  userEvent.click(screen.getByRole('button', { name: 'Set default' }));
+  userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save as default' }));
+
+  expect(JSON.parse(localStorage.getItem('gymExercises')).arms).toEqual([
+    'Bicep Curls',
+    'Barbell Skull Crushers',
+    'Tricep Extensions',
+  ]);
+  expect(screen.getByRole('button', { name: 'Default' })).toBeDisabled();
+});
+
+test("doesn't offer a default for a muscle workout", () => {
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /preacher curls/i }));
+  userEvent.click(screen.getByRole('button', { name: /start biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  expect(screen.queryByRole('button', { name: /set default|^default$/i })).not.toBeInTheDocument();
+});

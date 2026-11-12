@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Dumbbell,
   CalendarDays,
@@ -363,7 +363,7 @@ function Sheet({ title, onClose, children, footer }) {
   );
 }
 
-function ConfirmSheet({ title, body, confirmLabel, cancelLabel, onConfirm, onClose }) {
+function ConfirmSheet({ title, body, confirmLabel, cancelLabel, onConfirm, onClose, safe }) {
   return (
     <Sheet
       title={title}
@@ -373,7 +373,7 @@ function ConfirmSheet({ title, body, confirmLabel, cancelLabel, onConfirm, onClo
           <button className="btn btn-secondary" onClick={onClose}>
             {cancelLabel || "Cancel"}
           </button>
-          <button className="btn btn-danger" onClick={onConfirm}>
+          <button className={`btn ${safe ? "btn-primary" : "btn-danger"}`} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </>
@@ -411,6 +411,10 @@ export default function GymTracker() {
   const [planToDelete, setPlanToDelete] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [emptySetCount, setEmptySetCount] = useState(0);
+  const [confirmDefault, setConfirmDefault] = useState(false);
+  // Finish moves from the top bar to the bottom once you scroll down to it
+  const [atBottom, setAtBottom] = useState(false);
+  const bottomRef = useRef(null);
   const [editing, setEditing] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
@@ -534,6 +538,17 @@ export default function GymTracker() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [screen, muscleId]);
+
+  useEffect(() => {
+    const el = bottomRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => setAtBottom(entry.isIntersecting));
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      setAtBottom(false);
+    };
+  }, [screen, activeWorkout?.id]);
 
   // Exercises you've used yourself, in plans or in past workouts
   const getYourExercises = () => {
@@ -708,6 +723,22 @@ export default function GymTracker() {
     setShowAddExerciseModal(false);
     setAddExerciseSearch("");
     setAddExerciseAt(null);
+  };
+
+  // Days and custom plans have a default list; muscle workouts are picked fresh each time
+  const defaultListFor = (type) =>
+    DAYS.some((d) => d.id === type)
+      ? exercises[type] || []
+      : customPlans.find((p) => p.id === type)?.exercises || null;
+
+  const workoutNames = (w) => [...new Set(w.exercises.map((ex) => ex.name))];
+
+  const saveAsDefault = () => {
+    const { type } = activeWorkout;
+    const names = workoutNames(activeWorkout);
+    if (DAYS.some((d) => d.id === type)) setExercises({ ...exercises, [type]: names });
+    else setCustomPlans(customPlans.map((p) => (p.id === type ? { ...p, exercises: names } : p)));
+    setConfirmDefault(false);
   };
 
   const countEmptySets = (w) =>
@@ -1100,7 +1131,29 @@ export default function GymTracker() {
                   <span>{getWorkoutLabel(activeWorkout.type)}</span>
                 </div>
               )}
-              <button className="btn btn-primary btn-sm" onClick={() => finishWorkout()}>
+              {activeWorkout &&
+                defaultListFor(activeWorkout.type) &&
+                (() => {
+                  const isDefault =
+                    JSON.stringify(workoutNames(activeWorkout)) ===
+                    JSON.stringify(defaultListFor(activeWorkout.type));
+                  return (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setConfirmDefault(true)}
+                      disabled={isDefault || !activeWorkout.exercises.length}
+                    >
+                      {isDefault ? "Default" : "Set default"}
+                    </button>
+                  );
+                })()}
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => finishWorkout()}
+                style={atBottom ? { visibility: "hidden" } : undefined}
+                aria-hidden={atBottom || undefined}
+                tabIndex={atBottom ? -1 : undefined}
+              >
                 Finish
               </button>
             </>
@@ -2332,6 +2385,14 @@ export default function GymTracker() {
                   <Plus size={18} aria-hidden="true" />
                   Add exercise
                 </button>
+
+                <div className="finish-bottom" ref={bottomRef}>
+                  {atBottom && (
+                    <button className="btn btn-primary btn-block" onClick={() => finishWorkout()}>
+                      Finish
+                    </button>
+                  )}
+                </div>
               </>
             );
           })()}
@@ -2501,6 +2562,20 @@ export default function GymTracker() {
             ))}
           </div>
         </Sheet>
+      )}
+
+      {confirmDefault && activeWorkout && (
+        <ConfirmSheet
+          title={`Make this your ${getWorkoutLabel(activeWorkout.type)} default?`}
+          body={`Next time, ${getWorkoutLabel(activeWorkout.type)} starts with these ${plural(
+            workoutNames(activeWorkout).length,
+            "exercise"
+          )}: ${workoutNames(activeWorkout).join(", ")}. This workout carries on as it is.`}
+          confirmLabel="Save as default"
+          safe
+          onConfirm={saveAsDefault}
+          onClose={() => setConfirmDefault(false)}
+        />
       )}
 
       {emptySetCount > 0 && (

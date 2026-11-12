@@ -1656,3 +1656,27 @@ select.field,
   gap: 8px;
   margin-bottom: 6px;
 }
+
+/* Finish at the end of a workout: space is kept so the page doesn't jump */
+.finish-bottom {
+  min-height: 56px;
+  margin-top: 16px;
+}
+
+.finish-bottom .btn {
+  height: 52px;
+  animation: finish-in 200ms var(--ease-out);
+}
+
+@keyframes finish-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .finish-bottom .btn {
+    animation: none;
+  }
+}
