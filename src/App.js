@@ -7,6 +7,8 @@ import {
   ClipboardList,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Plus,
   Trash2,
   Pencil,
@@ -412,6 +414,8 @@ export default function GymTracker() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [emptySetCount, setEmptySetCount] = useState(0);
   const [confirmDefault, setConfirmDefault] = useState(false);
+  // "Removed X · Undo" bar shown for a few seconds after removing something
+  const [toast, setToast] = useState(null);
   // Finish moves from the top bar to the bottom once you scroll down to it
   const [atBottom, setAtBottom] = useState(false);
   const bottomRef = useRef(null);
@@ -538,6 +542,14 @@ export default function GymTracker() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [screen, muscleId]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showUndo = (text, undo) => setToast({ text, undo, key: Date.now() });
 
   useEffect(() => {
     const el = bottomRef.current;
@@ -680,22 +692,52 @@ export default function GymTracker() {
     }));
   };
 
+  const changeExercise = (exId, change) =>
+    setActiveWorkout((aw) =>
+      aw && { ...aw, exercises: aw.exercises.map((ex) => (ex.id === exId ? change(ex) : ex)) }
+    );
+
   const removeSet = (exId, setIdx) => {
-    setActiveWorkout((aw) => ({
-      ...aw,
-      exercises: aw.exercises.map((ex) => {
-        if (ex.id !== exId || ex.sets.length <= 1) return ex;
-        return { ...ex, sets: ex.sets.filter((_, i) => i !== setIdx) };
-      }),
-    }));
+    const ex = activeWorkout.exercises.find((e) => e.id === exId);
+    if (!ex || ex.sets.length <= 1) return;
+    const removed = ex.sets[setIdx];
+    changeExercise(exId, (e) => ({ ...e, sets: e.sets.filter((_, i) => i !== setIdx) }));
+    showUndo(`Removed set ${setIdx + 1} of ${ex.name}`, () =>
+      changeExercise(exId, (e) => {
+        const sets = [...e.sets];
+        sets.splice(setIdx, 0, removed);
+        return { ...e, sets };
+      })
+    );
   };
 
   const removeExercise = (exId) => {
+    const index = activeWorkout.exercises.findIndex((ex) => ex.id === exId);
+    const removed = activeWorkout.exercises[index];
     setActiveWorkout((aw) => ({
       ...aw,
       exercises: aw.exercises.filter((ex) => ex.id !== exId),
     }));
+    showUndo(`Removed ${removed.name}`, () =>
+      setActiveWorkout((aw) => {
+        if (!aw) return aw;
+        const exs = [...aw.exercises];
+        exs.splice(Math.min(index, exs.length), 0, removed);
+        return { ...aw, exercises: exs };
+      })
+    );
   };
+
+  // Swap an exercise with the one above (-1) or below (+1)
+  const moveExercise = (exId, by) =>
+    setActiveWorkout((aw) => {
+      const exs = [...aw.exercises];
+      const i = exs.findIndex((ex) => ex.id === exId);
+      const j = i + by;
+      if (i < 0 || j < 0 || j >= exs.length) return aw;
+      [exs[i], exs[j]] = [exs[j], exs[i]];
+      return { ...aw, exercises: exs };
+    });
 
   const openExercisePicker = (at) => {
     setAddExerciseAt(at);
@@ -794,9 +836,18 @@ export default function GymTracker() {
   };
 
   const deleteWorkout = (id) => {
+    const removed = workouts.find((w) => w.id === id);
     setWorkouts(workouts.filter((w) => w.id !== id));
     cloud.removeWorkout(id);
     setWorkoutToDelete(null);
+    showUndo(`Deleted ${getWorkoutLabel(removed.type)} workout`, () => {
+      setWorkouts((ws) =>
+        [removed, ...ws.filter((w) => w.id !== id)].sort(
+          (a, b) => new Date(b.date) - new Date(a.date)
+        )
+      );
+      cloud.saveWorkout(removed);
+    });
   };
 
   const openMuscle = (id) => {
@@ -1037,6 +1088,44 @@ export default function GymTracker() {
     return customPlans.find((p) => p.id === type)?.name || "Custom";
   };
 
+  // This week (from Monday) against last week, and sets that beat the previous session
+  const getWeekSummary = () => {
+    const monday = startOfDay(new Date());
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const lastMonday = new Date(monday);
+    lastMonday.setDate(lastMonday.getDate() - 7);
+    const inRange = (w, from, to) => new Date(w.date) >= from && (!to || new Date(w.date) < to);
+    const thisWeek = workouts.filter((w) => inRange(w, monday));
+    let sets = 0,
+      up = 0;
+    thisWeek.forEach((w) =>
+      w.exercises.forEach((ex) => {
+        const done = completedSets(ex.sets);
+        sets += done.length;
+        const prev = workouts
+          .filter(
+            (o) =>
+              gymOf(o) === gymOf(w) &&
+              new Date(o.date) < new Date(w.date) &&
+              o.exercises.some((e) => e.name === ex.name && completedSets(e.sets).length)
+          )
+          .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+        const prevSets = prev
+          ? completedSets(prev.exercises.find((e) => e.name === ex.name).sets)
+          : [];
+        done.forEach((st, i) => {
+          if (prevSets[i] && compareSet(st, prevSets[i]) === "up") up++;
+        });
+      })
+    );
+    return {
+      workouts: thisWeek.length,
+      lastWeek: workouts.filter((w) => inRange(w, lastMonday, monday)).length,
+      sets,
+      up,
+    };
+  };
+
   const getLastDone = (type) => {
     const last = workouts
       .filter((w) => w.type === type)
@@ -1207,6 +1296,36 @@ export default function GymTracker() {
                 </button>
               </div>
             </div>
+
+            {workouts.length > 0 &&
+              (() => {
+                const week = getWeekSummary();
+                return (
+                  <section className="panel week-summary" aria-label="This week">
+                    <div className="stat-row">
+                      <div>
+                        <span className="stat-value num">{week.workouts}</span>
+                        <span className="stat-label">
+                          {week.workouts === 1 ? "Workout" : "Workouts"} this week
+                        </span>
+                      </div>
+                      <div>
+                        <span className="stat-value num">{week.sets}</span>
+                        <span className="stat-label">Sets logged</span>
+                      </div>
+                      <div>
+                        <span className={`stat-value num${week.up ? " up" : ""}`}>{week.up}</span>
+                        <span className="stat-label">Sets up on last time</span>
+                      </div>
+                    </div>
+                    <p className="hint week-compare">
+                      {week.lastWeek === 0
+                        ? "Nothing logged last week."
+                        : `Last week: ${plural(week.lastWeek, "workout")}.`}
+                    </p>
+                  </section>
+                );
+              })()}
 
             {workouts.length === 0 && (
               <p className="hint" style={{ marginBottom: 14 }}>
@@ -2266,6 +2385,22 @@ export default function GymTracker() {
                             )}
                           </div>
                           <button
+                            className="icon-btn"
+                            onClick={() => moveExercise(exercise.id, -1)}
+                            disabled={index === 0}
+                            aria-label={`Move ${exercise.name} up`}
+                          >
+                            <ChevronUp size={18} />
+                          </button>
+                          <button
+                            className="icon-btn"
+                            onClick={() => moveExercise(exercise.id, 1)}
+                            disabled={index === withHistory.length - 1}
+                            aria-label={`Move ${exercise.name} down`}
+                          >
+                            <ChevronDown size={18} />
+                          </button>
+                          <button
                             className="icon-btn danger"
                             onClick={() => removeExercise(exercise.id)}
                             aria-label={`Remove ${exercise.name}`}
@@ -2397,6 +2532,25 @@ export default function GymTracker() {
             );
           })()}
       </main>
+
+      {toast && (
+        <div
+          key={toast.key}
+          className={`toast${screen === "workout" ? "" : " above-tabs"}`}
+          role="status"
+        >
+          <span>{toast.text}</span>
+          <button
+            className="toast-undo"
+            onClick={() => {
+              toast.undo();
+              setToast(null);
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
 
       {showAddExerciseModal && (
         <Sheet

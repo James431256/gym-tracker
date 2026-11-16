@@ -254,3 +254,76 @@ test("doesn't offer a default for a muscle workout", () => {
   userEvent.click(screen.getByRole('button', { name: /start workout/i }));
   expect(screen.queryByRole('button', { name: /set default|^default$/i })).not.toBeInTheDocument();
 });
+
+const startArms = () => {
+  render(<App />);
+  userEvent.click(screen.getByText('Arms'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+};
+const order = () => screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'));
+
+test('moves exercises up and down in a workout', () => {
+  startArms();
+  expect(order()).toEqual(['Bicep Curls', 'Preacher Curls', 'Barbell Skull Crushers', 'Tricep Extensions']);
+  expect(screen.getByRole('button', { name: 'Move Bicep Curls up' })).toBeDisabled();
+  userEvent.click(screen.getByRole('button', { name: 'Move Tricep Extensions up' }));
+  userEvent.click(screen.getByRole('button', { name: 'Move Bicep Curls down' }));
+  expect(order()).toEqual(['Preacher Curls', 'Bicep Curls', 'Tricep Extensions', 'Barbell Skull Crushers']);
+});
+
+test('undoes removing an exercise or a set', () => {
+  startArms();
+  userEvent.click(screen.getByRole('button', { name: 'Remove Preacher Curls' }));
+  expect(order()).not.toContain('Preacher Curls');
+  userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  expect(order()[1]).toBe('Preacher Curls');
+
+  const curls = within(screen.getByRole('region', { name: 'Bicep Curls' }));
+  userEvent.type(curls.getByLabelText('Set 1 reps'), '9');
+  userEvent.click(curls.getByRole('button', { name: 'Remove set 1' }));
+  expect(screen.getByRole('status')).toHaveTextContent('Removed set 1 of Bicep Curls');
+  userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  expect(curls.getByLabelText('Set 1 reps')).toHaveValue(9);
+});
+
+test('undoes deleting a workout from history', () => {
+  seed([[20, 10]]);
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'History' })[0]);
+  userEvent.click(screen.getByRole('button', { name: /delete biceps workout/i }));
+  userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(JSON.parse(localStorage.getItem('gymWorkouts'))).toHaveLength(0);
+  userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  expect(JSON.parse(localStorage.getItem('gymWorkouts'))).toHaveLength(1);
+  expect(screen.getByText('20×10')).toBeInTheDocument();
+});
+
+test('sums up this week on the train screen', () => {
+  const day = (ago) => {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - ago);
+    return d.toISOString();
+  };
+  const monday = (new Date().getDay() + 6) % 7; // days since Monday
+  const w = (id, date, sets) => ({
+    id,
+    type: 'arms',
+    date,
+    exercises: [{ id: 1, name: 'Bicep Curls', sets: sets.map(([weight, reps]) => ({ weight, reps })) }],
+  });
+  localStorage.setItem(
+    'gymWorkouts',
+    JSON.stringify([
+      w(3, day(0), [[20, 10], [20, 8]]),
+      w(2, day(monday + 2), [[20, 9], [20, 8]]),
+      w(1, day(monday + 20), [[20, 8]]),
+    ])
+  );
+  render(<App />);
+  const week = within(screen.getByRole('region', { name: 'This week' }));
+  expect(week.getByText('Workout this week').previousSibling).toHaveTextContent('1');
+  expect(week.getByText('Sets logged').previousSibling).toHaveTextContent('2');
+  expect(week.getByText('Sets up on last time').previousSibling).toHaveTextContent('1');
+  expect(week.getByText('Last week: 1 workout.')).toBeInTheDocument();
+});
