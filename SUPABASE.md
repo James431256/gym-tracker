@@ -53,3 +53,18 @@ If the project does get paused, the app keeps working on your phone. Resume the 
 | `user_data` | person | plans, custom plans, settings (including your gyms), exercises added to muscles |
 
 You can browse your data in Supabase's **Table Editor**.
+
+## Friends
+
+**Plans → Friends** lets people link up with a six-character code and see each other's training days and streaks. It's off until you pick a display name there.
+
+| Table | One row per | Holds |
+| --- | --- | --- |
+| `profiles` | person who set up friends | display name, friend code, whether sharing is paused |
+| `friendships` | pair of people | who asked, who was asked, and `pending` or `accepted` |
+| `workout_summaries` | finished workout | the workout's name, its date, and three counts: exercises, sets, and sets up on last time |
+
+- Friends only ever see `workout_summaries`. Weights, reps, exercise names and gyms stay in `workouts`, which only you can read.
+- Once you have a profile, the app keeps your summaries in step with your workouts: it adds or updates one when you finish or edit a workout and removes it when you delete one.
+- You can read a friend's summaries only after they accept, and only while they haven't turned on **Pause sharing**. You can read someone's name once a request is waiting between you.
+- Requests are sent with the `send_friend_request(code)` function, not by writing to `friendships`. The person asked accepts by changing the row to `accepted`. Either person can delete the row to decline, cancel or unlink.

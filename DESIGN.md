@@ -34,3 +34,10 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 - Tabs sit in a bottom bar on phones and move into the top bar from 768px.
 - Hover styles only apply on devices with a real pointer (`@media (hover: hover) and (pointer: fine)`). Pressing a button scales it to 0.97.
 - Motion: 150–250 ms ease-out for state changes, the drawer curve for sheets, and a fade only when the user prefers reduced motion.
+
+## Friends
+
+- Plate colours mean workout days, so people get their own colours on the Friends calendar. You are always the white plate (`.person-me`). Friends take `--person-1` to `--person-5` (orange, violet, cyan, pink, sand) in the order you linked up, oldest first, so a friend keeps their colour when you add more. A sixth friend starts the list again.
+- A person is a plain dot, never a disc: discs are for plans.
+- The Friends calendar shows up to four dots in a day, then a `+`. Tapping the day opens a sheet with everyone who trained.
+- Friends see a session as its name and three counts ("6 exercises · 14 sets · 3 up on last time"). Never show a friend's weights or gym, and don't guess why nothing is showing: say "Nothing shared yet".

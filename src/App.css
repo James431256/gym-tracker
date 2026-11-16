@@ -1762,3 +1762,156 @@ select.field,
     animation: none;
   }
 }
+
+/* ---------- Friends ---------- */
+
+.person-me {
+  --tone: var(--plate-white);
+}
+.person-1 {
+  --tone: var(--person-1);
+}
+.person-2 {
+  --tone: var(--person-2);
+}
+.person-3 {
+  --tone: var(--person-3);
+}
+.person-4 {
+  --tone: var(--person-4);
+}
+.person-5 {
+  --tone: var(--person-5);
+}
+
+.person-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.friend-code {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.14em;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.friend-add {
+  border-top: 0;
+}
+
+.friend-add .field {
+  flex: 1;
+  min-width: 0;
+  font-size: 19px;
+  letter-spacing: 0.1em;
+}
+
+.friend-add .field::placeholder {
+  font-family: var(--font);
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.friend-request {
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+}
+
+.friends-note {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.switch {
+  flex: none;
+  width: 52px;
+  height: 32px;
+  padding: 3px;
+  border-radius: 16px;
+  background: var(--line-2);
+  transition: background-color 200ms var(--ease-out);
+}
+
+.switch-knob {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 200ms var(--ease-out), background-color 200ms var(--ease-out);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--plate-white);
+}
+
+.switch[aria-checked="true"] .switch-knob {
+  background: var(--floor);
+  transform: translateX(20px);
+}
+
+.cal-view {
+  display: flex;
+  margin-bottom: 14px;
+}
+
+.cal-view .segmented {
+  flex: 1;
+}
+
+.cal-view .segmented button {
+  flex: 1;
+  font-family: var(--font);
+  font-size: 15px;
+}
+
+button.day {
+  width: 100%;
+  transition: transform 160ms var(--ease-out), background-color 150ms ease;
+}
+
+button.day:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.day:hover {
+    background: var(--line);
+  }
+}
+
+.day-more {
+  font-size: 10px;
+  line-height: 7px;
+  color: var(--text-3);
+}
+
+.people-legend {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.people-legend .row {
+  padding: 11px 16px;
+}
+
+.day-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch-knob,
+  button.day {
+    transition: none;
+  }
+}

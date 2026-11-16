@@ -18,6 +18,13 @@
   --plate-white: #e9e7e2;
   --steel: #8b8880;
 
+  /* People on the friends calendar: off the plate hues, which mean workout days */
+  --person-1: #f0883e;
+  --person-2: #a98bf5;
+  --person-3: #4cc3d9;
+  --person-4: #f07ab0;
+  --person-5: #b9a27c;
+
   /* State text on dark ground */
   --up: #6cc77a;
   --down: #ec857c;

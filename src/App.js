@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
+  Users,
   Plus,
   Trash2,
   Pencil,
@@ -34,6 +35,8 @@ import {
   assignMuscle,
 } from "./muscles";
 import { useCloudSync } from "./sync";
+import { useFriends } from "./friends";
+import { FriendsScreen, FriendsCalendar } from "./FriendsScreens";
 import ProgressChart from "./ProgressChart";
 
 const loadSaved = (key, fallback) => {
@@ -434,6 +437,7 @@ export default function GymTracker() {
   const [addExerciseSearch, setAddExerciseSearch] = useState("");
   const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
   const [monthOffset, setMonthOffset] = useState(0);
+  const [calendarView, setCalendarView] = useState("Me");
   const [customPlans, setCustomPlans] = useState(() =>
     loadSaved("gymCustomPlans", [])
   );
@@ -1088,6 +1092,54 @@ export default function GymTracker() {
     return customPlans.find((p) => p.id === type)?.name || "Custom";
   };
 
+  // One workout's logged sets, and how many beat the previous session of the
+  // same exercise at the same gym
+  const tallySets = (w) => {
+    let sets = 0,
+      up = 0,
+      exercisesDone = 0;
+    w.exercises.forEach((ex) => {
+      const done = completedSets(ex.sets);
+      sets += done.length;
+      if (done.length) exercisesDone++;
+      const prev = workouts
+        .filter(
+          (o) =>
+            gymOf(o) === gymOf(w) &&
+            new Date(o.date) < new Date(w.date) &&
+            o.exercises.some((e) => e.name === ex.name && completedSets(e.sets).length)
+        )
+        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+      const prevSets = prev
+        ? completedSets(prev.exercises.find((e) => e.name === ex.name).sets)
+        : [];
+      done.forEach((st, i) => {
+        if (prevSets[i] && compareSet(st, prevSets[i]) === "up") up++;
+      });
+    });
+    return { sets, up, exercisesDone };
+  };
+
+  // What friends see of a workout: its name and three counts, nothing else
+  const summariseWorkout = (w) => {
+    const tally = tallySets(w);
+    return {
+      label: getWorkoutLabel(w.type),
+      exercise_count: tally.exercisesDone,
+      set_count: tally.sets,
+      sets_up: tally.up,
+    };
+  };
+
+  const onFriendsCalendar = screen === "calendar" && calendarView === "Friends";
+  const friends = useFriends({
+    user: cloud.user,
+    workouts,
+    summarise: summariseWorkout,
+    canPublish: cloud.status === "synced",
+    active: screen === "friends" || onFriendsCalendar,
+  });
+
   // This week (from Monday) against last week, and sets that beat the previous session
   const getWeekSummary = () => {
     const monday = startOfDay(new Date());
@@ -1098,26 +1150,11 @@ export default function GymTracker() {
     const thisWeek = workouts.filter((w) => inRange(w, monday));
     let sets = 0,
       up = 0;
-    thisWeek.forEach((w) =>
-      w.exercises.forEach((ex) => {
-        const done = completedSets(ex.sets);
-        sets += done.length;
-        const prev = workouts
-          .filter(
-            (o) =>
-              gymOf(o) === gymOf(w) &&
-              new Date(o.date) < new Date(w.date) &&
-              o.exercises.some((e) => e.name === ex.name && completedSets(e.sets).length)
-          )
-          .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-        const prevSets = prev
-          ? completedSets(prev.exercises.find((e) => e.name === ex.name).sets)
-          : [];
-        done.forEach((st, i) => {
-          if (prevSets[i] && compareSet(st, prevSets[i]) === "up") up++;
-        });
-      })
-    );
+    thisWeek.forEach((w) => {
+      const tally = tallySets(w);
+      sets += tally.sets;
+      up += tally.up;
+    });
     return {
       workouts: thisWeek.length,
       lastWeek: workouts.filter((w) => inRange(w, lastMonday, monday)).length,
@@ -1259,7 +1296,11 @@ export default function GymTracker() {
                     className="tab"
                     onClick={() => setScreen(s)}
                     aria-current={
-                      screen === s || (s === "home" && screen === "muscle") ? "page" : undefined
+                      screen === s ||
+                      (s === "home" && screen === "muscle") ||
+                      (s === "manage" && screen === "friends")
+                        ? "page"
+                        : undefined
                     }
                   >
                     <Icon size={20} aria-hidden="true" />
@@ -1659,6 +1700,29 @@ export default function GymTracker() {
                     </button>
                   </div>
                 </div>
+                <div className="cal-view">
+                  <Segmented
+                    label="Whose calendar"
+                    options={["Me", "Friends"]}
+                    value={calendarView}
+                    onChange={setCalendarView}
+                  />
+                </div>
+                {calendarView === "Friends" ? (
+                  <FriendsCalendar
+                    friends={friends}
+                    signedIn={!!cloud.user}
+                    workouts={workouts}
+                    summarise={summariseWorkout}
+                    month={cm}
+                    year={cy}
+                    daysInMonth={daysInMonth}
+                    startDow={startDow}
+                    onOpenFriends={() => setScreen("friends")}
+                    Sheet={Sheet}
+                  />
+                ) : (
+                <>
                 <div className="cal">
                   <div className="cal-grid">
                     {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
@@ -1701,6 +1765,8 @@ export default function GymTracker() {
                     <span className="dot tone-other" /> Other
                   </span>
                 </div>
+                </>
+                )}
               </>
             );
           })()}
@@ -2101,6 +2167,17 @@ export default function GymTracker() {
               )}
             </div>
 
+            <div className="list section">
+              <button className="row" onClick={() => setScreen("friends")}>
+                <Users size={20} className="account-icon" aria-hidden="true" />
+                <div className="row-main">
+                  <div className="row-title">Friends</div>
+                  <div className="row-sub">See each other's training days and streaks.</div>
+                </div>
+                <ChevronRight size={18} className="row-chevron" aria-hidden="true" />
+              </button>
+            </div>
+
             <section className="section">
               <div className="section-head">
                 <h2 className="section-title">Gyms</h2>
@@ -2301,6 +2378,17 @@ export default function GymTracker() {
               </div>
             </section>
           </>
+        )}
+
+        {screen === "friends" && (
+          <FriendsScreen
+            friends={friends}
+            cloud={cloud}
+            onBack={() => setScreen("manage")}
+            onSignIn={() => setShowAuth(true)}
+            Sheet={Sheet}
+            ConfirmSheet={ConfirmSheet}
+          />
         )}
 
         {screen === "workout" &&
