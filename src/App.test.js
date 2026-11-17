@@ -327,3 +327,55 @@ test('sums up this week on the train screen', () => {
   expect(week.getByText('Sets up on last time').previousSibling).toHaveTextContent('1');
   expect(week.getByText('Last week: 1 workout.')).toBeInTheDocument();
 });
+
+test('makes a new plan from a pasted list and starts it with those sets and weights', () => {
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+  userEvent.click(screen.getByRole('button', { name: /new plan from a list/i }));
+  userEvent.type(screen.getByLabelText('Name'), 'Push');
+  userEvent.paste(
+    screen.getByLabelText('Exercises'),
+    'Bench Press, Chest, 3, 60\nLandmine Thing\nShoulder Press, Shoulders'
+  );
+  // Landmine Thing is new and the app can't guess its body part, so it can't save yet
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+  expect(screen.getByText(/line 2: new exercise: add its body part/i)).toBeInTheDocument();
+
+  const box = screen.getByLabelText('Exercises');
+  userEvent.clear(box);
+  userEvent.paste(box, 'Bench Press, Chest, 3, 60\nLandmine Thing, Chest, 2\nShoulder Press, Shoulders');
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+
+  const plans = JSON.parse(localStorage.getItem('gymCustomPlans'));
+  expect(plans).toEqual([
+    expect.objectContaining({ name: 'Push', exercises: ['Bench Press', 'Landmine Thing', 'Shoulder Press'] }),
+  ]);
+  expect(JSON.parse(localStorage.getItem('gymMuscleExercises')).chest).toContain('Landmine Thing');
+
+  userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+  userEvent.click(screen.getByText('Push'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  const bench = within(screen.getByRole('region', { name: 'Bench Press' }));
+  expect(bench.getByLabelText('Set 3 weight in kg')).toHaveValue(60);
+  const fly = within(screen.getByRole('region', { name: 'Landmine Thing' }));
+  expect(fly.queryByLabelText('Set 3 weight in kg')).not.toBeInTheDocument();
+  expect(fly.getByLabelText('Set 2 weight in kg')).toHaveValue(null);
+});
+
+test('edits a day as a list and loads a list from a file', async () => {
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+  userEvent.click(screen.getByRole('button', { name: 'Edit Arms as a list' }));
+  expect(screen.getByLabelText('Exercises')).toHaveValue(
+    'Bicep Curls, Biceps\nPreacher Curls, Biceps\nBarbell Skull Crushers, Triceps\nTricep Extensions, Triceps'
+  );
+  const file = new File(['Exercise,Body part,Sets\nHammer Curls,Biceps,3\nTricep Pushdowns,Triceps'], 'arms.csv', {
+    type: 'text/csv',
+  });
+  userEvent.upload(screen.getByTestId('plan-file'), file);
+  expect(await screen.findByText('Loaded arms.csv')).toBeInTheDocument();
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+
+  expect(JSON.parse(localStorage.getItem('gymExercises')).arms).toEqual(['Hammer Curls', 'Tricep Pushdowns']);
+  expect(JSON.parse(localStorage.getItem('gymSettings')).planTargets.arms).toEqual({ 'Hammer Curls': { sets: 3 } });
+});

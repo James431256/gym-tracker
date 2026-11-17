@@ -1915,3 +1915,63 @@ button.day:active {
     transition: none;
   }
 }
+
+/* ---------- Plan lists ---------- */
+
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.list-head .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.list-text {
+  height: auto;
+  min-height: 150px;
+  padding: 12px 14px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.list-help {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.list-preview {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list-preview .row {
+  padding: 10px 14px;
+}
+
+.list-preview .row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: normal;
+}
+
+.list-preview .row-sub.field-error {
+  margin-top: 2px;
+}
+
+.list-bad {
+  background: rgba(236, 133, 124, 0.08);
+}
+
+.list-new {
+  color: var(--plate-yellow);
+}

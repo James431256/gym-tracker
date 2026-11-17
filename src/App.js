@@ -22,6 +22,8 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  ListOrdered,
+  Upload,
   MapPin,
 } from "lucide-react";
 import "./App.css";
@@ -38,6 +40,8 @@ import { useCloudSync } from "./sync";
 import { useFriends } from "./friends";
 import { FriendsScreen, FriendsCalendar } from "./FriendsScreens";
 import ProgressChart from "./ProgressChart";
+import PlanListSheet from "./PlanListSheet";
+import { planToText } from "./planList";
 
 const loadSaved = (key, fallback) => {
   try {
@@ -225,6 +229,8 @@ const DEFAULT_SETTINGS = {
   weightJump: 2.5,
   gyms: [{ id: FIRST_GYM, name: "My gym" }],
   defaultGymId: FIRST_GYM,
+  // Per-plan sets and starting weights from plan lists: { planId: { exercise: { sets, weight } } }
+  planTargets: {},
 };
 
 const gymOf = (w) => w.gymId || FIRST_GYM;
@@ -417,6 +423,8 @@ export default function GymTracker() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [emptySetCount, setEmptySetCount] = useState(0);
   const [confirmDefault, setConfirmDefault] = useState(false);
+  // Plan list editor: { planId } to edit one, { planId: null } for a new plan
+  const [listEditor, setListEditor] = useState(null);
   // "Removed X · Undo" bar shown for a few seconds after removing something
   const [toast, setToast] = useState(null);
   // Finish moves from the top bar to the bottom once you scroll down to it
@@ -615,7 +623,9 @@ export default function GymTracker() {
     setShowDatePicker(true);
   };
 
-  const buildExerciseEntry = (exerciseName, atGym) => {
+  const buildExerciseEntry = (exerciseName, atGym, planId) => {
+    // Sets and starting weight set for this exercise in the plan's list, if any
+    const target = settings.planTargets?.[planId]?.[exerciseName] || {};
     const history = getExerciseHistory(exerciseName, atGym);
     // Weights don't carry between gyms, but show what you did elsewhere
     const away = history.length
@@ -626,9 +636,10 @@ export default function GymTracker() {
     const lastSets = last ? completedSets(last.sets) : null;
     // Pre-fill the recommended weight only. Reps start blank so every set is
     // something you typed, and Finish can spot any you forgot
-    const sets = Array.from({ length: settings.defaultSets }, (_, i) => {
+    // A plan's starting weight only fills in until there's history to go on
+    const sets = Array.from({ length: target.sets || settings.defaultSets }, (_, i) => {
       const prev = lastSets?.[i] || lastSets?.[lastSets.length - 1];
-      return { weight: rec ? rec.weight : prev?.weight || 0, reps: 0 };
+      return { weight: rec ? rec.weight : prev?.weight || target.weight || 0, reps: 0 };
     });
     return {
       id: Date.now() + Math.random(),
@@ -648,7 +659,7 @@ export default function GymTracker() {
       customPlans.find((p) => p.id === type)?.exercises ||
       [];
     const atGym = startGymId || gymId;
-    const workoutExercises = list.map((n) => buildExerciseEntry(n, atGym));
+    const workoutExercises = list.map((n) => buildExerciseEntry(n, atGym, type));
     const workoutDate =
       selectedDate && selectedTime
         ? new Date(`${selectedDate}T${selectedTime}`).toISOString()
@@ -756,7 +767,7 @@ export default function GymTracker() {
     if (isNew && !muscle) return setNewExercise(name);
     if (isNew) setMuscleExercises(assignMuscle(muscleExercises, name, muscle));
     setNewExercise(null);
-    const entry = buildExerciseEntry(name, gymOf(activeWorkout));
+    const entry = buildExerciseEntry(name, gymOf(activeWorkout), activeWorkout.type);
     setActiveWorkout((aw) => {
       const exs = [...aw.exercises];
       if (addExerciseAt === "end") {
@@ -1077,7 +1088,44 @@ export default function GymTracker() {
     closeCustomModal();
   };
 
+  const planNamesFor = (id) =>
+    exercises[id] || customPlans.find((p) => p.id === id)?.exercises || [];
+
+  // Save a pasted or uploaded list as a new plan, or over an existing one
+  const savePlanList = ({ name, rows }) => {
+    const names = rows.map((r) => r.name);
+    let added = muscleExercises;
+    rows.forEach((r) => {
+      if (r.part && (r.isNew || partOf(r.name) !== r.part))
+        added = assignMuscle(added, r.name, r.part);
+    });
+    setMuscleExercises(added);
+    const targets = Object.fromEntries(
+      rows
+        .filter((r) => r.sets || r.weight != null)
+        .map((r) => [
+          r.name,
+          { ...(r.sets ? { sets: r.sets } : {}), ...(r.weight != null ? { weight: r.weight } : {}) },
+        ])
+    );
+    let id = listEditor.planId;
+    if (!id) {
+      id = `custom_${Date.now()}`;
+      setCustomPlans([...customPlans, { id, name, exercises: names }]);
+    } else if (DAYS.some((d) => d.id === id)) {
+      setExercises({ ...exercises, [id]: names });
+    } else {
+      setCustomPlans(customPlans.map((p) => (p.id === id ? { ...p, exercises: names } : p)));
+    }
+    setSettings((s) => ({ ...s, planTargets: { ...(s.planTargets || {}), [id]: targets } }));
+    setListEditor(null);
+  };
+
   const deleteCustomPlan = (id) => {
+    setSettings((s) => {
+      const { [id]: _gone, ...rest } = s.planTargets || {};
+      return { ...s, planTargets: rest };
+    });
     setCustomPlans(customPlans.filter((p) => p.id !== id));
     setPlanToDelete(null);
   };
@@ -2277,6 +2325,13 @@ export default function GymTracker() {
                     <Disc type={day.id} size={20} />
                     {day.name}
                   </h2>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setListEditor({ planId: day.id })}
+                    aria-label={`Edit ${day.name} as a list`}
+                  >
+                    Edit as list
+                  </button>
                 </div>
                 <div className="list">
                   {(exercises[day.id] || []).map((ex, i) => (
@@ -2355,6 +2410,13 @@ export default function GymTracker() {
                     </div>
                     <button
                       className="icon-btn"
+                      onClick={() => setListEditor({ planId: plan.id })}
+                      aria-label={`Edit ${plan.name} as a list`}
+                    >
+                      <ListOrdered size={17} />
+                    </button>
+                    <button
+                      className="icon-btn"
                       onClick={() => openCustomModal(idx)}
                       aria-label={`Edit ${plan.name}`}
                     >
@@ -2374,6 +2436,12 @@ export default function GymTracker() {
                     <Plus size={16} aria-hidden="true" />
                   </span>
                   New plan
+                </button>
+                <button className="row row-new" onClick={() => setListEditor({ planId: null })}>
+                  <span className="new-icon">
+                    <Upload size={15} aria-hidden="true" />
+                  </span>
+                  New plan from a list
                 </button>
               </div>
             </section>
@@ -2804,6 +2872,27 @@ export default function GymTracker() {
             ))}
           </div>
         </Sheet>
+      )}
+
+      {listEditor && (
+        <PlanListSheet
+          Sheet={Sheet}
+          title={listEditor.planId ? `Edit ${getWorkoutLabel(listEditor.planId)}` : "New plan from a list"}
+          askName={!listEditor.planId}
+          initialText={
+            listEditor.planId
+              ? planToText(
+                  planNamesFor(listEditor.planId),
+                  settings.planTargets?.[listEditor.planId],
+                  partOf
+                )
+              : ""
+          }
+          partOf={partOf}
+          isKnown={isKnownExercise}
+          onSave={savePlanList}
+          onClose={() => setListEditor(null)}
+        />
       )}
 
       {confirmDefault && activeWorkout && (
