@@ -66,8 +66,9 @@ const looksLikeHeader = (cells) =>
   cells.slice(1).some((c) => /body|part|muscle|sets|weight|kg/i.test(c));
 
 // partOf(name) gives a known exercise's body part (or ""); isKnown(name) says whether
-// the app already has it. Returns every line with what was read and any problem.
-export const parsePlanList = (text, { partOf, isKnown }) => {
+// the app already has it, and canonical(name) gives its existing spelling.
+// Returns every line with what was read and any problem.
+export const parsePlanList = (text, { partOf, isKnown, canonical = (n) => n }) => {
   const rows = [];
   const seen = new Set();
   (text || "").split(/\r?\n/).forEach((raw, i) => {
@@ -76,7 +77,13 @@ export const parsePlanList = (text, { partOf, isKnown }) => {
     const cells = splitLine(line);
     if (rows.length === 0 && looksLikeHeader(cells)) return;
     const [name = "", partText = "", setsText = "", weightText = ""] = cells;
-    const row = { line: i + 1, raw: raw.trim(), name: name.replace(/\s+/g, " ") };
+    // Known exercises keep their existing spelling so history stays together
+    const typed = name.replace(/\s+/g, " ");
+    const row = {
+      line: i + 1,
+      raw: raw.trim(),
+      name: typed && isKnown(typed) ? canonical(typed) : typed,
+    };
     const problems = [];
 
     if (!row.name) problems.push("No exercise name");

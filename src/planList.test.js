@@ -48,3 +48,11 @@ test('turns a plan back into a list that reads the same', () => {
   expect(text).toBe('Bench Press, Chest, 3, 60\nLat Raises, Shoulders');
   expect(parsePlanList(text, opts).every((r) => !r.problem)).toBe(true);
 });
+
+test('uses the existing spelling for an exercise the app already knows', () => {
+  const canonical = (n) => Object.keys(known).find((k) => k.toLowerCase() === n.toLowerCase()) || n;
+  const isKnown = (n) => Object.keys(known).some((k) => k.toLowerCase() === n.toLowerCase());
+  const rows = parsePlanList('bench  press, chest, 3\nBENCH PRESS', { ...opts, isKnown, canonical });
+  expect(rows[0]).toMatchObject({ name: 'Bench Press', isNew: false, problem: null });
+  expect(rows[1].problem).toBe('Already in this list');
+});

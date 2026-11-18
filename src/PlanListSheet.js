@@ -17,6 +17,7 @@ export default function PlanListSheet({
   initialText = "",
   partOf,
   isKnown,
+  canonical,
   onSave,
   onClose,
 }) {
@@ -26,7 +27,10 @@ export default function PlanListSheet({
   const [error, setError] = useState("");
   const fileRef = useRef(null);
 
-  const rows = useMemo(() => parsePlanList(text, { partOf, isKnown }), [text, partOf, isKnown]);
+  const rows = useMemo(
+    () => parsePlanList(text, { partOf, isKnown, canonical }),
+    [text, partOf, isKnown, canonical],
+  );
   const problems = rows.filter((r) => r.problem);
 
   const readFile = (file) => {

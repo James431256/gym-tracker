@@ -599,6 +599,16 @@ export default function GymTracker() {
     return getAllKnownExercises().some((e) => e.toLowerCase() === lower);
   };
 
+  // "bench press" typed for a known exercise becomes "Bench Press", so it shares
+  // that exercise's history instead of starting a separate one
+  const canonicalName = (name) => {
+    const clean = name.trim().replace(/\s+/g, " ");
+    const lower = clean.toLowerCase();
+    return getAllKnownExercises().find((e) => e.toLowerCase() === lower) || clean;
+  };
+
+  const hasName = (list, name) => list.some((e) => e.toLowerCase() === name.toLowerCase());
+
   // Past sessions of an exercise at one gym (any gym when null), newest first
   const getExerciseHistory = (exerciseName, atGym = gymId) =>
     workouts
@@ -970,10 +980,11 @@ export default function GymTracker() {
   const AUTH_TITLE = { signin: "Sign in", signup: "Create account", reset: "Reset password" };
 
   const addExerciseToList = (type) => {
-    const name = (addDrafts[type] || "").trim();
+    const name = canonicalName(addDrafts[type] || "");
     const part = addParts[type];
     if (!name || !part) return;
-    setExercises({ ...exercises, [type]: [...(exercises[type] || []), name] });
+    const list = exercises[type] || [];
+    if (!hasName(list, name)) setExercises({ ...exercises, [type]: [...list, name] });
     setMuscleExercises(assignMuscle(muscleExercises, name, part));
     setAddDrafts({ ...addDrafts, [type]: "" });
   };
@@ -1048,8 +1059,9 @@ export default function GymTracker() {
   };
 
   const addCustomExercise = () => {
-    const name = customExerciseInput.trim();
+    const name = canonicalName(customExerciseInput);
     if (!name) return;
+    if (hasName(customExercises, name)) return setCustomError(`${name} is already in this plan.`);
     if (!isKnownExercise(name)) {
       if (!customPart) return setCustomError(`Pick which body part ${name} works.`);
       setMuscleExercises(assignMuscle(muscleExercises, name, customPart));
@@ -2890,6 +2902,7 @@ export default function GymTracker() {
           }
           partOf={partOf}
           isKnown={isKnownExercise}
+          canonical={canonicalName}
           onSave={savePlanList}
           onClose={() => setListEditor(null)}
         />

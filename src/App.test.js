@@ -379,3 +379,29 @@ test('edits a day as a list and loads a list from a file', async () => {
   expect(JSON.parse(localStorage.getItem('gymExercises')).arms).toEqual(['Hammer Curls', 'Tricep Pushdowns']);
   expect(JSON.parse(localStorage.getItem('gymSettings')).planTargets.arms).toEqual({ 'Hammer Curls': { sets: 3 } });
 });
+
+test("doesn't duplicate an exercise typed with different capitals", () => {
+  seed([[20, 10]]); // Bicep Curls history
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+
+  // Adding one that's already on the day doesn't add it twice
+  const arms = within(screen.getByRole('textbox', { name: 'New Arms exercise' }).closest('form'));
+  userEvent.type(arms.getByRole('textbox'), 'bicep curls');
+  userEvent.click(arms.getByRole('button', { name: 'Add' }));
+  expect(JSON.parse(localStorage.getItem('gymExercises')).arms.filter((n) => /bicep curls/i.test(n))).toEqual([
+    'Bicep Curls',
+  ]);
+
+  // A list keeps the existing spelling, so the history carries on
+  userEvent.click(screen.getByRole('button', { name: /new plan from a list/i }));
+  userEvent.type(screen.getByLabelText('Name'), 'Curls');
+  userEvent.paste(screen.getByLabelText('Exercises'), 'bicep curls');
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+  expect(JSON.parse(localStorage.getItem('gymCustomPlans'))[0].exercises).toEqual(['Bicep Curls']);
+
+  userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+  userEvent.click(screen.getByText('Curls'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  expect(screen.getByRole('region', { name: 'Bicep Curls' })).toHaveTextContent(/Go up to 22\.5 kg/);
+});
