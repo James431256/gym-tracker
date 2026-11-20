@@ -1497,6 +1497,7 @@ export default function GymTracker() {
                         : `Last week: ${plural(week.lastWeek, "workout")}.`}
                     </p>
                     {new Date().getDay() === 0 &&
+                      settings.sundaySummary !== false &&
                       (() => {
                         // Sunday: how the week went for each body part
                         const monday = startOfDay(new Date());
@@ -2456,6 +2457,18 @@ export default function GymTracker() {
                   options={[1, 2, 2.5, 5]}
                   value={settings.weightJump}
                   onChange={(n) => setSettings({ ...settings, weightJump: n })}
+                />
+              </div>
+              <div className="setting-row">
+                <div className="row-main">
+                  <div className="row-title">Sunday summary</div>
+                  <div className="row-sub">Sets per body part for the week, on the Train screen on Sundays.</div>
+                </div>
+                <Segmented
+                  label="Sunday summary"
+                  options={["On", "Off"]}
+                  value={settings.sundaySummary === false ? "Off" : "On"}
+                  onChange={(v) => setSettings({ ...settings, sundaySummary: v === "On" })}
                 />
               </div>
             </div>

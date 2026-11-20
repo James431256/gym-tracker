@@ -519,4 +519,21 @@ describe('on a Sunday', () => {
     expect(rows).toEqual(['Back3', 'Biceps2']);
     expect(week.getByText(/not hit: chest, shoulders, triceps/i)).toBeInTheDocument();
   });
+
+  test('can turn the summary off', () => {
+    localStorage.setItem(
+      'gymWorkouts',
+      JSON.stringify([savedWorkout(1, 'arms', '2026-11-21T10:00:00', [[20, 10]])])
+    );
+    render(<App />);
+    expect(screen.getByText('Sets per body part this week')).toBeInTheDocument();
+    userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+    const setting = within(screen.getByRole('group', { name: 'Sunday summary' }));
+    userEvent.click(setting.getByRole('button', { name: 'Off' }));
+    expect(JSON.parse(localStorage.getItem('gymSettings')).sundaySummary).toBe(false);
+    userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+    expect(screen.queryByText('Sets per body part this week')).not.toBeInTheDocument();
+    // The rest of the week panel stays
+    expect(screen.getByRole('region', { name: 'This week' })).toBeInTheDocument();
+  });
 });
