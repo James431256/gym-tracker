@@ -434,3 +434,106 @@ test('suggests the heavier weight when sets were at different weights', () => {
     { weight: 50, reps: 10 },
   ]), 2.5)).toMatchObject({ action: 'up', weight: 52.5 });
 });
+
+const savedWorkout = (id, type, date, sets = [[20, 10]], name = 'Bicep Curls') => ({
+  id,
+  type,
+  date,
+  exercises: [{ id: 1, name, sets: sets.map(([weight, reps]) => ({ weight, reps })) }],
+});
+
+test('picks a plate colour for a new plan and shows it on the calendar', () => {
+  localStorage.setItem(
+    'gymCustomPlans',
+    JSON.stringify([{ id: 'custom_1', name: 'Legs', exercises: ['Squat'] }])
+  );
+  localStorage.setItem(
+    'gymWorkouts',
+    JSON.stringify([savedWorkout(1, 'custom_1', new Date().toISOString(), [[60, 8]], 'Squat')])
+  );
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: /^new plan$/i }));
+  // The first colour no plan uses yet is picked for you
+  expect(screen.getByRole('radio', { name: 'Green' })).toBeChecked();
+  userEvent.click(screen.getByRole('radio', { name: 'Purple' }));
+  userEvent.type(screen.getByLabelText('Name'), 'Pull');
+  userEvent.type(screen.getByPlaceholderText('Romanian Deadlift'), 'Lat Pulldowns{enter}');
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+
+  expect(JSON.parse(localStorage.getItem('gymCustomPlans'))[1]).toMatchObject({
+    name: 'Pull',
+    colour: 'purple',
+  });
+  const pull = screen.getByRole('button', { name: /^pull/i });
+  // The plate is drawn, not read out, so check its colour class directly
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(pull.querySelector('.disc')).toHaveClass('tone-purple');
+
+  // Plans without a colour stay white, and the calendar names them instead of "Other"
+  userEvent.click(screen.getAllByRole('button', { name: 'Calendar' })[0]);
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(screen.getByText('Legs').querySelector('.dot')).toHaveClass('tone-other');
+  expect(screen.queryByText('Other')).not.toBeInTheDocument();
+});
+
+test('pins a plan to the top of the workouts list', () => {
+  localStorage.setItem(
+    'gymCustomPlans',
+    JSON.stringify([{ id: 'custom_1', name: 'Legs', exercises: ['Squat'], colour: 'orange' }])
+  );
+  render(<App />);
+  const names = () =>
+    within(screen.getByRole('region', { name: /workouts/i }))
+      .getAllByRole('button', { name: /exercises?/ })
+      .map((b) => b.textContent);
+  expect(names()[0]).toMatch(/^Back/);
+  userEvent.click(screen.getByRole('button', { name: 'Pin Legs to the top' }));
+  expect(names()[0]).toMatch(/^Legs/);
+  expect(screen.getByRole('button', { name: 'Unpin Legs' })).toHaveAttribute('aria-pressed', 'true');
+  expect(JSON.parse(localStorage.getItem('gymSettings')).pinnedPlans).toEqual(['custom_1']);
+  userEvent.click(screen.getByRole('button', { name: 'Unpin Legs' }));
+  expect(names()[0]).toMatch(/^Back/);
+});
+
+describe('on a Sunday', () => {
+  beforeEach(() => {
+    jest.useFakeTimers('modern');
+    jest.setSystemTime(new Date('2026-11-22T18:00:00'));
+  });
+  afterEach(() => jest.useRealTimers());
+
+  test('sums up the sets for each body part that week', () => {
+    localStorage.setItem(
+      'gymWorkouts',
+      JSON.stringify([
+        savedWorkout(3, 'arms', '2026-11-21T10:00:00', [[20, 10], [20, 9]]),
+        savedWorkout(2, 'back', '2026-11-17T10:00:00', [[50, 10], [50, 10], [50, 9]], 'Lat Pulldowns'),
+        // The Saturday before doesn't count
+        savedWorkout(1, 'back', '2026-11-15T10:00:00', [[50, 10]], 'Lat Pulldowns'),
+      ])
+    );
+    render(<App />);
+    const week = within(screen.getByRole('region', { name: 'This week' }));
+    expect(week.getByText('Sets per body part this week')).toBeInTheDocument();
+    const rows = week.getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows).toEqual(['Back3', 'Biceps2']);
+    expect(week.getByText(/not hit: chest, shoulders, triceps/i)).toBeInTheDocument();
+  });
+
+  test('can turn the summary off', () => {
+    localStorage.setItem(
+      'gymWorkouts',
+      JSON.stringify([savedWorkout(1, 'arms', '2026-11-21T10:00:00', [[20, 10]])])
+    );
+    render(<App />);
+    expect(screen.getByText('Sets per body part this week')).toBeInTheDocument();
+    userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+    const setting = within(screen.getByRole('group', { name: 'Sunday summary' }));
+    userEvent.click(setting.getByRole('button', { name: 'Off' }));
+    expect(JSON.parse(localStorage.getItem('gymSettings')).sundaySummary).toBe(false);
+    userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+    expect(screen.queryByText('Sets per body part this week')).not.toBeInTheDocument();
+    // The rest of the week panel stays
+    expect(screen.getByRole('region', { name: 'This week' })).toBeInTheDocument();
+  });
+});

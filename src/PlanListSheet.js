@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import { MUSCLES } from "./muscles";
 import { parsePlanList } from "./planList";
+import { ColourPicker } from "./plates";
 
 const EXAMPLE = `Bench Press, Chest, 3, 60
 Shoulder Press, Shoulders
@@ -18,10 +19,13 @@ export default function PlanListSheet({
   partOf,
   isKnown,
   canonical,
+  defaultColour = "white",
+  Disc,
   onSave,
   onClose,
 }) {
   const [name, setName] = useState("");
+  const [colour, setColour] = useState(defaultColour);
   const [text, setText] = useState(initialText);
   const [fileNote, setFileNote] = useState("");
   const [error, setError] = useState("");
@@ -50,7 +54,7 @@ export default function PlanListSheet({
     if (askName && !name.trim()) return setError("Give the plan a name.");
     if (!rows.length) return setError("Add at least one exercise.");
     if (problems.length) return setError("Fix the highlighted lines first.");
-    onSave({ name: name.trim(), rows });
+    onSave({ name: name.trim(), colour: askName ? colour : undefined, rows });
   };
 
   return (
@@ -85,6 +89,12 @@ export default function PlanListSheet({
               placeholder="Push"
               autoFocus
             />
+          </div>
+        )}
+        {askName && Disc && (
+          <div>
+            <span className="label">Colour</span>
+            <ColourPicker value={colour} onChange={setColour} Disc={Disc} />
           </div>
         )}
 

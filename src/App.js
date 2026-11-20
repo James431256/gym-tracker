@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import {
   Dumbbell,
   CalendarDays,
@@ -25,6 +25,7 @@ import {
   ListOrdered,
   Upload,
   MapPin,
+  Pin,
 } from "lucide-react";
 import "./App.css";
 import {
@@ -42,6 +43,7 @@ import { FriendsScreen, FriendsCalendar } from "./FriendsScreens";
 import ProgressChart from "./ProgressChart";
 import PlanListSheet from "./PlanListSheet";
 import { planToText } from "./planList";
+import { ColourPicker, nextFreeColour, toneOfColour } from "./plates";
 
 const loadSaved = (key, fallback) => {
   try {
@@ -350,11 +352,15 @@ const STATE_LABEL = {
   down: "Below last time",
 };
 
-// A bumper plate seen face-on, coloured by day
-function Disc({ type, size = 32 }) {
+// Plans can have their own plate colour, so the app passes down how to look one up
+const ToneContext = createContext(toneFor);
+
+// A bumper plate seen face-on, coloured by day or plan
+function Disc({ type, tone, size = 32 }) {
+  const toneOf = useContext(ToneContext);
   return (
     <svg
-      className={`disc tone-${toneFor(type)}`}
+      className={`disc tone-${tone || toneOf(type)}`}
       width={size}
       height={size}
       viewBox="0 0 32 32"
@@ -476,6 +482,7 @@ export default function GymTracker() {
   const [customPlans, setCustomPlans] = useState(() =>
     loadSaved("gymCustomPlans", [])
   );
+  const [customColour, setCustomColour] = useState("green");
 
   const [boot] = useState(() =>
     tidyPrefs(
@@ -1075,6 +1082,11 @@ export default function GymTracker() {
     setEditingCustom(idx);
     setCustomName(idx !== null ? customPlans[idx].name : "");
     setCustomExercises(idx !== null ? [...customPlans[idx].exercises] : []);
+    setCustomColour(
+      idx !== null
+        ? customPlans[idx].colour || "white"
+        : nextFreeColour(customPlans.map((p) => p.colour))
+    );
     setCustomExerciseInput("");
     setCustomError("");
     setShowCustomModal(true);
@@ -1109,6 +1121,7 @@ export default function GymTracker() {
         ...u[editingCustom],
         name: customName.trim(),
         exercises: customExercises,
+        colour: customColour,
       };
       setCustomPlans(u);
     } else {
@@ -1118,6 +1131,7 @@ export default function GymTracker() {
           id: `custom_${Date.now()}`,
           name: customName.trim(),
           exercises: customExercises,
+          colour: customColour,
         },
       ]);
     }
@@ -1131,7 +1145,7 @@ export default function GymTracker() {
     exercises[id] || customPlans.find((p) => p.id === id)?.exercises || [];
 
   // Save a pasted or uploaded list as a new plan, or over an existing one
-  const savePlanList = ({ name, rows }) => {
+  const savePlanList = ({ name, colour, rows }) => {
     const names = rows.map((r) => r.name);
     let added = muscleExercises;
     rows.forEach((r) => {
@@ -1150,7 +1164,7 @@ export default function GymTracker() {
     let id = listEditor.planId;
     if (!id) {
       id = `custom_${Date.now()}`;
-      setCustomPlans([...customPlans, { id, name, exercises: names }]);
+      setCustomPlans([...customPlans, { id, name, exercises: names, colour }]);
     } else if (DAYS.some((d) => d.id === id)) {
       setExercises({ ...exercises, [id]: names });
     } else {
@@ -1170,6 +1184,10 @@ export default function GymTracker() {
   };
 
   const getDay = (type) => [...DAYS, ...OLD_DAYS].find((d) => d.id === type);
+
+  // A plan's own colour if it has one, otherwise its day's or muscle's plate
+  const toneOf = (type) =>
+    toneOfColour(customPlans.find((p) => p.id === type)?.colour) || toneFor(type);
 
   const getWorkoutLabel = (type) => {
     if (getDay(type)) return getDay(type).name;
@@ -1274,16 +1292,26 @@ export default function GymTracker() {
     return { daysInMonth, startDow, wDates, cm, cy };
   };
 
-  // Training split by plate colour: the three days, then everything else
+  // Training split: the three days by plate colour, plans with their own
+  // colour, then everything else
   const SPLIT = [
-    ...DAYS.map((d) => ({ tone: d.tone, name: d.name })),
-    { tone: "other", name: "Other" },
+    ...DAYS.map((d) => ({ key: d.tone, tone: d.tone, name: d.name })),
+    ...customPlans
+      .filter((p) => p.colour)
+      .map((p) => ({ key: p.id, tone: toneOfColour(p.colour), name: p.name })),
+    { key: "other", tone: "other", name: "Other" },
   ];
+
+  const splitKeyOf = (type) => {
+    if (customPlans.some((p) => p.id === type && p.colour)) return type;
+    const tone = toneFor(type);
+    return DAYS.some((d) => d.tone === tone) ? tone : "other";
+  };
 
   const countByTone = (list) =>
     SPLIT.map((s) => ({
       ...s,
-      count: list.filter((w) => toneFor(w.type) === s.tone).length,
+      count: list.filter((w) => splitKeyOf(w.type) === s.key).length,
     }));
 
   const getInsights = () => {
@@ -1325,7 +1353,24 @@ export default function GymTracker() {
     ...customPlans.map((p) => ({ id: p.id, name: p.name, sub: null, exercises: p.exercises })),
   ];
 
+  // Pinned plans go first, in the order they were pinned
+  const pinned = (settings.pinnedPlans || []).filter((id) => plans.some((p) => p.id === id));
+  const trainPlans = [
+    ...pinned.map((id) => plans.find((p) => p.id === id)),
+    ...plans.filter((p) => !pinned.includes(p.id)),
+  ];
+
+  const togglePin = (id) =>
+    setSettings((st) => {
+      const list = st.pinnedPlans || [];
+      return {
+        ...st,
+        pinnedPlans: list.includes(id) ? list.filter((p) => p !== id) : [...list, id],
+      };
+    });
+
   return (
+    <ToneContext.Provider value={toneOf}>
     <div className="app">
       <header className="topbar">
         <div className="topbar-inner">
@@ -1451,6 +1496,47 @@ export default function GymTracker() {
                         ? "Nothing logged last week."
                         : `Last week: ${plural(week.lastWeek, "workout")}.`}
                     </p>
+                    {new Date().getDay() === 0 &&
+                      settings.sundaySummary !== false &&
+                      (() => {
+                        // Sunday: how the week went for each body part
+                        const monday = startOfDay(new Date());
+                        monday.setDate(monday.getDate() - 6);
+                        const stats = getMuscleStats(monday);
+                        const hit = MUSCLES.filter((m) => stats[m.id].sets > 0).sort(
+                          (a, b) => stats[b.id].sets - stats[a.id].sets
+                        );
+                        const missed = MUSCLES.filter((m) => !stats[m.id].sets);
+                        const top = Math.max(1, ...hit.map((m) => stats[m.id].sets));
+                        return (
+                          <div className="week-muscles">
+                            <h3 className="week-muscles-title">Sets per body part this week</h3>
+                            {hit.length === 0 ? (
+                              <p className="hint">No sets logged this week yet.</p>
+                            ) : (
+                              <ul className="week-muscle-list">
+                                {hit.map((m) => (
+                                  <li key={m.id}>
+                                    <span className="muscle-bar-name">{m.name}</span>
+                                    <span className="muscle-bar" aria-hidden="true">
+                                      <span
+                                        className={`tone-${m.tone}`}
+                                        style={{ width: `${(stats[m.id].sets / top) * 100}%` }}
+                                      />
+                                    </span>
+                                    <span className="muscle-bar-count num">{stats[m.id].sets}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {hit.length > 0 && missed.length > 0 && (
+                              <p className="hint week-missed">
+                                Not hit: {missed.map((m) => m.name).join(", ")}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                   </section>
                 );
               })()}
@@ -1469,25 +1555,31 @@ export default function GymTracker() {
               </h2>
             </div>
             <div className="list">
-              {plans.map((plan) => {
+              {trainPlans.map((plan) => {
                 const lastDone = getLastDone(plan.id);
+                const isPinned = pinned.includes(plan.id);
                 return (
-                  <button
-                    key={plan.id}
-                    className="row"
-                    onClick={() => handleWorkoutStart(plan.id)}
-                  >
-                    <Disc type={plan.id} />
-                    <div className="row-main">
-                      <div className="row-title">{plan.name}</div>
-                      {plan.sub && <div className="row-sub">{plan.sub}</div>}
-                      <div className="row-sub row-sub-quiet">
-                        {plural(plan.exercises.length, "exercise")}
-                        {lastDone ? ` · ${lastDone}` : ""}
-                      </div>
-                    </div>
-                    <ChevronRight className="row-chevron" size={18} aria-hidden="true" />
-                  </button>
+                  <div key={plan.id} className="row plan-row">
+                    <button className="plan-open" onClick={() => handleWorkoutStart(plan.id)}>
+                      <Disc type={plan.id} />
+                      <span className="row-main">
+                        <span className="row-title">{plan.name}</span>
+                        {plan.sub && <span className="row-sub">{plan.sub}</span>}
+                        <span className="row-sub row-sub-quiet">
+                          {plural(plan.exercises.length, "exercise")}
+                          {lastDone ? ` · ${lastDone}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      className={`icon-btn pin-btn${isPinned ? " pinned" : ""}`}
+                      onClick={() => togglePin(plan.id)}
+                      aria-pressed={isPinned}
+                      aria-label={isPinned ? `Unpin ${plan.name}` : `Pin ${plan.name} to the top`}
+                    >
+                      <Pin size={17} />
+                    </button>
+                  </div>
                 );
               })}
               <button className="row row-new" onClick={() => openCustomModal()}>
@@ -1825,7 +1917,7 @@ export default function GymTracker() {
                       const ds = new Date(cy, cm, day).toDateString();
                       const dw = wDates[ds] || [];
                       const isToday = ds === new Date().toDateString();
-                      const tones = [...new Set(dw.map(toneFor))];
+                      const tones = [...new Set(dw.map(toneOf))];
                       return (
                         <div
                           key={day}
@@ -1843,14 +1935,26 @@ export default function GymTracker() {
                   </div>
                 </div>
                 <div className="legend">
-                  {DAYS.map((d) => (
-                    <span key={d.id}>
-                      <span className={`dot tone-${d.tone}`} /> {d.name}
-                    </span>
-                  ))}
-                  <span>
-                    <span className="dot tone-other" /> Other
-                  </span>
+                  {(() => {
+                    // Your days, then every other workout you did this month, by name
+                    const inMonth = workouts.filter((w) => {
+                      const d = new Date(w.date);
+                      return d.getMonth() === cm && d.getFullYear() === cy;
+                    });
+                    const entries = new Map(
+                      DAYS.map((d) => [`${d.name}|${d.tone}`, { name: d.name, tone: d.tone }])
+                    );
+                    inMonth.forEach((w) => {
+                      const name = getWorkoutLabel(w.type);
+                      const tone = toneOf(w.type);
+                      entries.set(`${name}|${tone}`, { name, tone });
+                    });
+                    return [...entries.entries()].map(([key, e]) => (
+                      <span key={key}>
+                        <span className={`dot tone-${e.tone}`} /> {e.name}
+                      </span>
+                    ));
+                  })()}
                 </div>
                 </>
                 )}
@@ -1892,7 +1996,7 @@ export default function GymTracker() {
                               .filter((s) => s.count > 0)
                               .map((s) => (
                                 <span
-                                  key={s.tone}
+                                  key={s.key}
                                   className={`tone-${s.tone}`}
                                   style={{ flex: s.count }}
                                 />
@@ -1900,9 +2004,9 @@ export default function GymTracker() {
                           </div>
                           <div className="legend" style={{ marginTop: 8 }}>
                             {split
-                              .filter((s) => s.count > 0 || s.tone !== "other")
+                              .filter((s) => s.count > 0 || s.key !== "other")
                               .map((s) => (
-                                <span key={s.tone}>
+                                <span key={s.key}>
                                   <span className={`dot tone-${s.tone}`} /> {s.name}{" "}
                                   {s.count}
                                 </span>
@@ -1933,7 +2037,7 @@ export default function GymTracker() {
                                   .filter((s) => s.count > 0)
                                   .map((s) => (
                                     <span
-                                      key={s.tone}
+                                      key={s.key}
                                       className={`week-seg tone-${s.tone}`}
                                       style={{ height: `${(s.count / peak) * 100}%` }}
                                     />
@@ -2353,6 +2457,18 @@ export default function GymTracker() {
                   options={[1, 2, 2.5, 5]}
                   value={settings.weightJump}
                   onChange={(n) => setSettings({ ...settings, weightJump: n })}
+                />
+              </div>
+              <div className="setting-row">
+                <div className="row-main">
+                  <div className="row-title">Sunday summary</div>
+                  <div className="row-sub">Sets per body part for the week, on the Train screen on Sundays.</div>
+                </div>
+                <Segmented
+                  label="Sunday summary"
+                  options={["On", "Off"]}
+                  value={settings.sundaySummary === false ? "Off" : "On"}
+                  onChange={(v) => setSettings({ ...settings, sundaySummary: v === "On" })}
                 />
               </div>
             </div>
@@ -2930,6 +3046,8 @@ export default function GymTracker() {
           partOf={partOf}
           isKnown={isKnownExercise}
           canonical={canonicalName}
+          defaultColour={nextFreeColour(customPlans.map((p) => p.colour))}
+          Disc={Disc}
           onSave={savePlanList}
           onClose={() => setListEditor(null)}
         />
@@ -3069,6 +3187,10 @@ export default function GymTracker() {
                 placeholder="Leg day"
                 autoFocus
               />
+            </div>
+            <div>
+              <span className="label">Colour</span>
+              <ColourPicker value={customColour} onChange={setCustomColour} Disc={Disc} />
             </div>
             <div>
               <label className="label" htmlFor="plan-exercise">
@@ -3420,5 +3542,6 @@ export default function GymTracker() {
         />
       )}
     </div>
+    </ToneContext.Provider>
   );
 }
