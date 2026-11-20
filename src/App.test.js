@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import App from './App';
+import App, { recommend } from './App';
 import { musclesFor, exercisesForMuscle } from './muscles';
 
 beforeEach(() => localStorage.clear());
@@ -404,4 +404,33 @@ test("doesn't duplicate an exercise typed with different capitals", () => {
   userEvent.click(screen.getByText('Curls'));
   userEvent.click(screen.getByRole('button', { name: /start workout/i }));
   expect(screen.getByRole('region', { name: 'Bicep Curls' })).toHaveTextContent(/Go up to 22\.5 kg/);
+});
+
+test('suggests the heavier weight when sets were at different weights', () => {
+  const last = (sets) => [{ date: '2026-11-11', sets }];
+  // 7.5×12 then 10×12: move every set up to 10 kg
+  expect(recommend('Overhead Cable Extension', last([
+    { weight: 7.5, reps: 12 },
+    { weight: 10, reps: 12 },
+  ]), 2.5)).toMatchObject({ action: 'up', weight: 10 });
+  // Heavier set fell short: stay at the weight that worked
+  expect(recommend('Row', last([
+    { weight: 50, reps: 10 },
+    { weight: 55, reps: 5 },
+  ]), 2.5)).toMatchObject({ action: 'stay', weight: 50 });
+  // Started too heavy, then dropped: do every set at the lighter weight
+  expect(recommend('Row', last([
+    { weight: 55, reps: 5 },
+    { weight: 50, reps: 9 },
+  ]), 2.5)).toMatchObject({ action: 'down', weight: 50 });
+  // Assisted: less assistance is the harder weight
+  expect(recommend('Assisted Pull Ups', last([
+    { weight: 30, reps: 10 },
+    { weight: 25, reps: 9 },
+  ]), 2.5)).toMatchObject({ action: 'up', weight: 25 });
+  // Same weight still works as before
+  expect(recommend('Row', last([
+    { weight: 50, reps: 10 },
+    { weight: 50, reps: 10 },
+  ]), 2.5)).toMatchObject({ action: 'up', weight: 52.5 });
 });
