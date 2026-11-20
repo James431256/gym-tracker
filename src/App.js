@@ -135,7 +135,9 @@ const roundWeight = (w) => Math.max(0, Math.round(w * 100) / 100);
 // - first set in range but a later set fell short -> same weight, rest longer
 // - first set short of 8 -> same weight, unless it's well short or the second
 //   session in a row below 8, then drop the weight
-const recommend = (exerciseName, history, jump) => {
+// - sets at different weights -> every set at the heaviest weight that got 8+
+//   reps on each of its sets
+export const recommend = (exerciseName, history, jump) => {
   const sets = completedSets(history[0]?.sets);
   if (!sets.length) return null;
   const weight = sets[0].weight || 0;
@@ -153,6 +155,31 @@ const recommend = (exerciseName, history, jump) => {
       assisted,
       reason: `Hit ${REP_MAX}+ reps on every set`,
     };
+
+  if (!sameWeight) {
+    const isHarder = (a, b) => (assisted ? a < b : a > b);
+    const working = [...new Set(sets.map((s) => s.weight || 0))]
+      .sort((a, b) => (isHarder(a, b) ? -1 : 1))
+      .find((w) => sets.every((s) => (s.weight || 0) !== w || s.reps >= REP_MIN));
+    if (working !== undefined) {
+      const reps = Math.min(...sets.filter((s) => (s.weight || 0) === working).map((s) => s.reps));
+      if (isHarder(working, weight))
+        return {
+          action: "up",
+          weight: working,
+          assisted,
+          reason: `${reps} reps at ${working} kg, so do every set there`,
+        };
+      if (isHarder(weight, working))
+        return {
+          action: "down",
+          weight: working,
+          assisted,
+          reason: `${weight} kg was too heavy, do every set at ${working} kg`,
+        };
+      return { action: "stay", weight: working, reason: `Do every set at ${working} kg` };
+    }
+  }
 
   if (minReps < REP_MIN) {
     // First set in range but a later one fell away: that's rest, not the weight
