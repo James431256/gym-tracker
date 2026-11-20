@@ -9,7 +9,8 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
   - Back = blue plate (`--plate-blue`)
   - Chest & Shoulders = red plate (`--plate-red`)
   - Arms = yellow plate (`--plate-yellow`)
-  - Custom plans, old Push/Pull sessions, and leg and core muscles = white plate (`--plate-white`)
+  - Custom plans pick their own plate (`src/plates.js`): red, blue, yellow, green, orange (`--plate-orange`), purple (`--plate-purple`), pink (`--plate-pink`) or white. A new plan starts on a colour no other plan uses. Plans saved before colours existed stay white.
+  - Old Push/Pull sessions, and leg and core muscles = white plate (`--plate-white`)
   - A muscle takes the plate of the day it's trained on: Chest and Shoulders red, Back blue, Biceps and Triceps yellow
   - Beat last time = green plate (`--plate-green`)
 - The primary button is the white 5 kg plate (`--plate-white`) with dark text. Use one per view.
@@ -24,7 +25,7 @@ The look is built from competition bumper plates on a rubber gym floor. Use it w
 
 ## Signature
 
-- **Disc** (`<Disc type>`): a plate seen face-on. It marks a plan everywhere: plan rows, history, calendar dots and charts.
+- **Disc** (`<Disc type>`): a plate seen face-on. It marks a plan everywhere: plan rows, history, calendar dots and charts. It reads a plan's own colour through `ToneContext`. The calendar legend names every plan done that month by its colour, rather than lumping them into "Other".
 - **Loaded plate** (`.plate[data-state]`): a plate seen edge-on, next to each set in a workout. Outline = not logged yet, white = logged with no previous set, green = up on last time, steel = same, dark red = below. It springs in when the state changes.
 
 ## Components
