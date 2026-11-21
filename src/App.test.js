@@ -575,3 +575,72 @@ test('recommend goes up by the jump it is given', () => {
   expect(recommend('Row', history, 2).weight).toBe(22);
   expect(recommend('Row', history, 1).weight).toBe(21);
 });
+
+const setCount = (name) =>
+  within(screen.getByRole('region', { name })).getAllByLabelText(/^Set \d+ reps$/).length;
+
+test('a workout has its own sets, and an exercise in it can have its own', () => {
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+
+  // Arms starts every exercise on 4 sets
+  userEvent.click(screen.getByRole('button', { name: 'Arms defaults' }));
+  userEvent.type(within(screen.getByRole('dialog')).getByLabelText('Sets per exercise'), '4');
+  // Bicep Curls in Arms only: 3 sets with 1 kg jumps
+  userEvent.click(screen.getByRole('button', { name: 'Defaults for Bicep Curls in Arms' }));
+  let sheet = within(screen.getByRole('dialog', { name: 'Bicep Curls' }));
+  userEvent.type(sheet.getByLabelText('Sets'), '3');
+  userEvent.click(within(sheet.getByRole('group', { name: /weight jump/i })).getByRole('button', { name: '1' }));
+  userEvent.click(sheet.getByRole('button', { name: 'Save' }));
+  // Back on the Arms sheet with what was typed there kept
+  sheet = within(screen.getByRole('dialog', { name: 'Arms defaults' }));
+  expect(sheet.getByLabelText('Sets per exercise')).toHaveValue(4);
+  expect(sheet.getByRole('button', { name: /bicep curls in arms/i })).toHaveTextContent('3 sets · +1 kg jumps');
+  userEvent.click(sheet.getByRole('button', { name: 'Save' }));
+
+  userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+  userEvent.click(screen.getByText('Arms'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  expect(setCount('Bicep Curls')).toBe(3);
+  expect(setCount('Preacher Curls')).toBe(4);
+
+  // Other workouts are untouched
+  const s = JSON.parse(localStorage.getItem('gymSettings'));
+  expect(s.planDefaults).toEqual({ arms: { sets: 4 } });
+  expect(s.planTargets.arms['Bicep Curls']).toEqual({ sets: 3, jump: 1 });
+  expect(s.exerciseDefaults || {}).toEqual({});
+});
+
+test('changing a workout\'s defaults mid-workout updates sets not logged yet', () => {
+  render(<App />);
+  userEvent.click(screen.getByText('Arms'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  expect(setCount('Preacher Curls')).toBe(2);
+  userEvent.click(screen.getByRole('button', { name: /workout defaults/i }));
+  userEvent.type(screen.getByLabelText('Sets per exercise'), '3');
+  userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save' }));
+  expect(setCount('Preacher Curls')).toBe(3);
+});
+
+test('custom plans have their own defaults', () => {
+  render(<App />);
+  userEvent.click(screen.getAllByRole('button', { name: 'Plans' })[0]);
+  userEvent.click(screen.getByRole('button', { name: /new plan from a list/i }));
+  userEvent.type(screen.getByLabelText('Name'), 'Push');
+  userEvent.paste(screen.getByLabelText('Exercises'), 'Bench Press, Chest\nShoulder Press, Shoulders');
+  userEvent.click(screen.getByRole('button', { name: 'Save plan' }));
+
+  userEvent.click(screen.getByRole('button', { name: 'Push defaults' }));
+  userEvent.type(within(screen.getByRole('dialog')).getByLabelText('Sets per exercise'), '2');
+  userEvent.click(screen.getByRole('button', { name: 'Defaults for Bench Press in Push' }));
+  userEvent.type(screen.getByLabelText('Sets'), '5');
+  userEvent.click(within(screen.getByRole('dialog', { name: 'Bench Press' })).getByRole('button', { name: 'Save' }));
+  userEvent.click(within(screen.getByRole('dialog', { name: 'Push defaults' })).getByRole('button', { name: 'Save' }));
+  expect(screen.getByText(/2 exercises · 2 sets each/)).toBeInTheDocument();
+
+  userEvent.click(screen.getAllByRole('button', { name: 'Train' })[0]);
+  userEvent.click(screen.getByText('Push'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  expect(setCount('Bench Press')).toBe(5);
+  expect(setCount('Shoulder Press')).toBe(2);
+});
