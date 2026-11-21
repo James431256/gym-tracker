@@ -537,3 +537,41 @@ describe('on a Sunday', () => {
     expect(screen.getByRole('region', { name: 'This week' })).toBeInTheDocument();
   });
 });
+
+test('an exercise can have its own sets, starting weight and weight jump', () => {
+  render(<App />);
+  userEvent.click(screen.getByRole('button', { name: 'Plans' }));
+  userEvent.click(screen.getByRole('button', { name: /set defaults for an exercise/i }));
+  userEvent.type(screen.getByLabelText('Exercise'), 'preacher curls');
+  userEvent.type(screen.getByLabelText('Sets'), '4');
+  userEvent.type(screen.getByLabelText('Starting weight (kg)'), '15');
+  const sheet = within(screen.getByRole('dialog', { name: 'Exercise defaults' }));
+  userEvent.click(within(sheet.getByRole('group', { name: /weight jump/i })).getByRole('button', { name: '1' }));
+  userEvent.click(sheet.getByRole('button', { name: 'Save' }));
+
+  const defaults = screen.getByRole('region', { name: 'Exercise defaults' });
+  expect(within(defaults).getByText('Preacher Curls')).toBeInTheDocument();
+  expect(within(defaults).getByText('4 sets · starts at 15 kg · +1 kg jumps')).toBeInTheDocument();
+
+  // First time: four sets at the starting weight
+  userEvent.click(screen.getByRole('button', { name: 'Train' }));
+  userEvent.click(screen.getByRole('button', { name: /^biceps/i }));
+  userEvent.click(screen.getByRole('button', { name: /preacher curls/i }));
+  userEvent.click(screen.getByRole('button', { name: /start biceps · 1 exercise/i }));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  const preacher = within(screen.getByRole('region', { name: 'Preacher Curls' }));
+  [1, 2, 3, 4].forEach((n) => {
+    expect(preacher.getByLabelText(`Set ${n} weight in kg`)).toHaveValue(15);
+    userEvent.type(preacher.getByLabelText(`Set ${n} reps`), '10');
+  });
+  userEvent.click(screen.getByRole('button', { name: 'Finish' }));
+
+  // Next time it goes up by this exercise's 1 kg, not the app's 2.5 kg
+  expect(screen.getByRole('button', { name: /preacher curls/i })).toHaveTextContent(/Go up to 16 kg/);
+});
+
+test('recommend goes up by the jump it is given', () => {
+  const history = [{ sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }] }];
+  expect(recommend('Row', history, 2).weight).toBe(22);
+  expect(recommend('Row', history, 1).weight).toBe(21);
+});

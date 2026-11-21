@@ -26,6 +26,7 @@ import {
   Upload,
   MapPin,
   Pin,
+  SlidersHorizontal,
 } from "lucide-react";
 import "./App.css";
 import {
@@ -260,7 +261,22 @@ const DEFAULT_SETTINGS = {
   defaultGymId: FIRST_GYM,
   // Per-plan sets and starting weights from plan lists: { planId: { exercise: { sets, weight } } }
   planTargets: {},
+  // Each exercise's own defaults wherever it's done: { exercise: { sets, weight, jump } }
+  exerciseDefaults: {},
 };
+
+// Weight jumps offered for one exercise; any other number can be typed in
+const JUMP_OPTIONS = [0.5, 1, 1.25, 2, 2.5, 5];
+
+// "3 sets · starts at 20 kg · +1 kg"
+const describeDefaults = (d = {}) =>
+  [
+    d.sets && `${d.sets} sets`,
+    d.weight != null && `starts at ${d.weight} kg`,
+    d.jump && `+${d.jump} kg jumps`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
 const gymOf = (w) => w.gymId || FIRST_GYM;
 
@@ -432,7 +448,7 @@ function Segmented({ label, options, value, onChange }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o} aria-pressed={value === o} onClick={() => onChange(o)}>
+        <button key={o} type="button" aria-pressed={value === o} onClick={() => onChange(o)}>
           {o}
         </button>
       ))}
@@ -458,6 +474,8 @@ export default function GymTracker() {
   const [confirmDefault, setConfirmDefault] = useState(false);
   // Plan list editor: { planId } to edit one, { planId: null } for a new plan
   const [listEditor, setListEditor] = useState(null);
+  // { name, sets, weight, jump } while one exercise's defaults are being edited
+  const [defaultsEditor, setDefaultsEditor] = useState(null);
   // "Removed X · Undo" bar shown for a few seconds after removing something
   const [toast, setToast] = useState(null);
   // Finish moves from the top bar to the bottom once you scroll down to it
@@ -656,6 +674,52 @@ export default function GymTracker() {
       }))
       .filter((h) => completedSets(h.sets).length);
 
+  const defaultsFor = (name) => settings.exerciseDefaults?.[name] || {};
+  const openDefaults = (name) => {
+    const d = defaultsFor(name);
+    setDefaultsEditor({
+      name: name || "",
+      fixedName: !!name,
+      sets: d.sets ? String(d.sets) : "",
+      weight: d.weight != null ? String(d.weight) : "",
+      jump: d.jump ? String(d.jump) : "",
+      error: "",
+    });
+  };
+  const jumpFor = (name) => defaultsFor(name).jump || settings.weightJump;
+
+  // Save one exercise's defaults (an empty object clears them) and apply them to the
+  // workout in progress: new suggestion, and unlogged sets follow the new count and weight
+  const saveExerciseDefaults = (name, d) => {
+    const clean = Object.fromEntries(
+      Object.entries(d).filter(([, v]) => v !== undefined && v !== null && v !== "")
+    );
+    setSettings((s) => {
+      const { [name]: _old, ...rest } = s.exerciseDefaults || {};
+      return { ...s, exerciseDefaults: Object.keys(clean).length ? { ...rest, [name]: clean } : rest };
+    });
+    if (activeWorkout?.exercises.some((e) => e.name === name)) {
+      const atGym = gymOf(activeWorkout);
+      const history = getExerciseHistory(name, atGym);
+      const rec = recommend(name, history, clean.jump || settings.weightJump);
+      const target = settings.planTargets?.[activeWorkout.type]?.[name] || {};
+      const weight = rec ? rec.weight : completedSets(history[0]?.sets)[0]?.weight ?? target.weight ?? clean.weight;
+      setActiveWorkout((w) => ({
+        ...w,
+        exercises: w.exercises.map((ex) => {
+          if (ex.name !== name) return ex;
+          let sets = ex.sets.map((st) => (st.reps || weight == null ? st : { ...st, weight }));
+          const count = target.sets || clean.sets || settings.defaultSets;
+          if (!sets.some((st) => st.reps)) {
+            sets = Array.from({ length: count }, (_, i) => sets[i] || { weight: weight || 0, reps: 0 });
+          }
+          return { ...ex, rec, sets };
+        }),
+      }));
+    }
+    setDefaultsEditor(null);
+  };
+
   // A muscle workout passes the exercises picked for it
   const handleWorkoutStart = (type, list = null) => {
     setPendingWorkoutType(type);
@@ -668,22 +732,25 @@ export default function GymTracker() {
   };
 
   const buildExerciseEntry = (exerciseName, atGym, planId) => {
-    // Sets and starting weight set for this exercise in the plan's list, if any
+    // Sets and starting weight set for this exercise in the plan's list, if any,
+    // then the exercise's own defaults, then the app-wide settings
     const target = settings.planTargets?.[planId]?.[exerciseName] || {};
+    const own = defaultsFor(exerciseName);
     const history = getExerciseHistory(exerciseName, atGym);
     // Weights don't carry between gyms, but show what you did elsewhere
     const away = history.length
       ? null
       : getExerciseHistory(exerciseName, null).find((h) => gymOf(h) !== atGym);
     const last = history[0] || null;
-    const rec = recommend(exerciseName, history, settings.weightJump);
+    const rec = recommend(exerciseName, history, jumpFor(exerciseName));
     const lastSets = last ? completedSets(last.sets) : null;
     // Pre-fill the recommended weight only. Reps start blank so every set is
     // something you typed, and Finish can spot any you forgot
     // A plan's starting weight only fills in until there's history to go on
-    const sets = Array.from({ length: target.sets || settings.defaultSets }, (_, i) => {
+    const startWeight = target.weight ?? own.weight ?? 0;
+    const sets = Array.from({ length: target.sets || own.sets || settings.defaultSets }, (_, i) => {
       const prev = lastSets?.[i] || lastSets?.[lastSets.length - 1];
-      return { weight: rec ? rec.weight : prev?.weight || target.weight || 0, reps: 0 };
+      return { weight: rec ? rec.weight : prev?.weight || startWeight, reps: 0 };
     });
     return {
       id: Date.now() + Math.random(),
@@ -1684,7 +1751,7 @@ export default function GymTracker() {
                   i,
                   last: history[0] || null,
                   best,
-                  rec: recommend(name, history, settings.weightJump),
+                  rec: recommend(name, history, jumpFor(name)),
                 };
               })
               .sort((a, b) =>
@@ -2196,7 +2263,10 @@ export default function GymTracker() {
                         {REP_MIN}–{REP_MAX} reps on every working set.
                       </dd>
                       <dt>{REP_MAX}+ every set</dt>
-                      <dd>Go up by the smallest jump ({settings.weightJump} kg).</dd>
+                      <dd>
+                        Go up by the weight jump ({settings.weightJump} kg, unless an exercise has
+                        its own in Plans).
+                      </dd>
                       <dt>
                         {REP_MIN}–{REP_MAX - 1} reps
                       </dt>
@@ -2450,7 +2520,9 @@ export default function GymTracker() {
               <div className="setting-row">
                 <div className="row-main">
                   <div className="row-title">Weight jump</div>
-                  <div className="row-sub">How much to go up or down by, in kg.</div>
+                  <div className="row-sub">
+                    How much to go up or down by, in kg. Exercises can have their own below.
+                  </div>
                 </div>
                 <Segmented
                   label="Weight jump in kg"
@@ -2491,7 +2563,19 @@ export default function GymTracker() {
                 <div className="list">
                   {(exercises[day.id] || []).map((ex, i) => (
                     <div key={i} className="row" style={{ padding: "6px 6px 6px 16px" }}>
-                      <div className="row-main">{ex}</div>
+                      <div className="row-main">
+                        <div>{ex}</div>
+                        {describeDefaults(defaultsFor(ex)) && (
+                          <div className="row-sub">{describeDefaults(defaultsFor(ex))}</div>
+                        )}
+                      </div>
+                      <button
+                        className="icon-btn"
+                        onClick={() => openDefaults(ex)}
+                        aria-label={`Defaults for ${ex}`}
+                      >
+                        <SlidersHorizontal size={17} />
+                      </button>
                       <select
                         className={`part-select${partOf(ex) ? "" : " missing"}`}
                         value={partOf(ex)}
@@ -2550,6 +2634,49 @@ export default function GymTracker() {
                 </div>
               </section>
             ))}
+
+            <section className="section" aria-label="Exercise defaults">
+              <div className="section-head">
+                <h2 className="section-title">Exercise defaults</h2>
+              </div>
+              <div className="list">
+                {Object.entries(settings.exerciseDefaults || {})
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([name, d]) => (
+                    <div key={name} className="row" style={{ padding: "8px 6px 8px 16px" }}>
+                      <div className="row-main">
+                        <div className="row-title">{name}</div>
+                        <div className="row-sub">{describeDefaults(d)}</div>
+                      </div>
+                      <button
+                        className="icon-btn"
+                        onClick={() => openDefaults(name)}
+                        aria-label={`Edit defaults for ${name}`}
+                      >
+                        <Pencil size={17} />
+                      </button>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => saveExerciseDefaults(name, {})}
+                        aria-label={`Clear defaults for ${name}`}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  ))}
+                <button className="row row-new" onClick={() => openDefaults(null)}>
+                  <span className="new-icon">
+                    <Plus size={16} aria-hidden="true" />
+                  </span>
+                  Set defaults for an exercise
+                </button>
+              </div>
+              <p className="hint" style={{ marginTop: 8, fontSize: 13 }}>
+                Sets, starting weight and weight jump for one exercise, in every plan. Sets and
+                weights from a plan's list come first. The starting weight is only used until
+                you've logged the exercise.
+              </p>
+            </section>
 
             <section className="section">
               <div className="section-head">
@@ -2623,7 +2750,7 @@ export default function GymTracker() {
               const history = getExerciseHistory(exercise.name, gymOf(activeWorkout));
               return {
                 ...exercise,
-                rec: recommend(exercise.name, history, settings.weightJump),
+                rec: recommend(exercise.name, history, jumpFor(exercise.name)),
                 lastSets: history[0] ? completedSets(history[0].sets) : null,
                 lastDate: history[0]?.date || null,
               };
@@ -2695,6 +2822,13 @@ export default function GymTracker() {
                               </p>
                             )}
                           </div>
+                          <button
+                            className="icon-btn"
+                            onClick={() => openDefaults(exercise.name)}
+                            aria-label={`Defaults for ${exercise.name}`}
+                          >
+                            <SlidersHorizontal size={17} />
+                          </button>
                           <button
                             className="icon-btn"
                             onClick={() => moveExercise(exercise.id, -1)}
@@ -3469,6 +3603,135 @@ export default function GymTracker() {
           <p className="hint" style={{ marginTop: 10, fontSize: 13 }}>
             Next time the app opens at your default gym. Change it in Plans.
           </p>
+        </Sheet>
+      )}
+
+      {defaultsEditor && (
+        <Sheet
+          title={defaultsEditor.fixedName ? defaultsEditor.name : "Exercise defaults"}
+          onClose={() => setDefaultsEditor(null)}
+          footer={
+            <>
+              <button className="btn btn-secondary" onClick={() => setDefaultsEditor(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit" form="defaults-form">
+                Save
+              </button>
+            </>
+          }
+        >
+          <form
+            id="defaults-form"
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = defaultsEditor;
+              const name = d.fixedName ? d.name : canonicalName(d.name);
+              const fail = (error) => setDefaultsEditor({ ...d, error });
+              if (!name) return fail("Pick an exercise.");
+              const sets = d.sets === "" ? undefined : Number(d.sets);
+              const weight = d.weight === "" ? undefined : Number(d.weight);
+              const jump = d.jump === "" ? undefined : Number(d.jump);
+              if (sets !== undefined && !(Number.isInteger(sets) && sets >= 1 && sets <= 10))
+                return fail("Sets should be a whole number from 1 to 10.");
+              if (weight !== undefined && !(Number.isFinite(weight) && weight >= 0 && weight <= 1000))
+                return fail("Starting weight should be a number of kg.");
+              if (jump !== undefined && !(Number.isFinite(jump) && jump > 0 && jump <= 50))
+                return fail("Weight jump should be more than 0 kg.");
+              saveExerciseDefaults(name, { sets, weight, jump });
+            }}
+          >
+            {!defaultsEditor.fixedName && (
+              <div>
+                <label className="label" htmlFor="defaults-name">
+                  Exercise
+                </label>
+                <input
+                  id="defaults-name"
+                  className="field"
+                  list="defaults-known"
+                  value={defaultsEditor.name}
+                  onChange={(e) => setDefaultsEditor({ ...defaultsEditor, name: e.target.value, error: "" })}
+                  placeholder="Bench Press"
+                  autoFocus
+                />
+                <datalist id="defaults-known">
+                  {getAllKnownExercises().map((n) => (
+                    <option key={n} value={n} />
+                  ))}
+                </datalist>
+              </div>
+            )}
+            <div>
+              <label className="label" htmlFor="defaults-sets">
+                Sets
+              </label>
+              <input
+                id="defaults-sets"
+                className="field num"
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="10"
+                value={defaultsEditor.sets}
+                placeholder={`${settings.defaultSets} (app default)`}
+                onChange={(e) => setDefaultsEditor({ ...defaultsEditor, sets: e.target.value, error: "" })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="defaults-weight">
+                Starting weight (kg)
+              </label>
+              <input
+                id="defaults-weight"
+                className="field num"
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                value={defaultsEditor.weight}
+                placeholder="Blank to pick it on the day"
+                onChange={(e) => setDefaultsEditor({ ...defaultsEditor, weight: e.target.value, error: "" })}
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="defaults-jump">
+                Weight jump (kg)
+              </label>
+              <div className="segmented-wrap">
+                <Segmented
+                  label="Weight jump for this exercise in kg"
+                  options={["App", ...JUMP_OPTIONS]}
+                  value={defaultsEditor.jump === "" ? "App" : Number(defaultsEditor.jump)}
+                  onChange={(v) =>
+                    setDefaultsEditor({ ...defaultsEditor, jump: v === "App" ? "" : String(v), error: "" })
+                  }
+                />
+              </div>
+              <input
+                id="defaults-jump"
+                className="field num"
+                style={{ marginTop: 8 }}
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                value={defaultsEditor.jump}
+                placeholder={`${settings.weightJump} (app default)`}
+                onChange={(e) => setDefaultsEditor({ ...defaultsEditor, jump: e.target.value, error: "" })}
+              />
+            </div>
+            <p className="hint" style={{ fontSize: 13 }}>
+              Leave anything blank to use the app's setting. Once you've logged it, the app
+              suggests the weight from last time, going up or down by the jump.
+            </p>
+            {defaultsEditor.error && (
+              <p className="field-error" role="alert">
+                {defaultsEditor.error}
+              </p>
+            )}
+          </form>
         </Sheet>
       )}
 

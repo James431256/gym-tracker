@@ -477,6 +477,11 @@ button.row:active {
   }
 }
 
+.segmented-wrap .segmented {
+  display: flex;
+  flex-wrap: wrap;
+}
+
 .label {
   display: block;
   font-size: 14px;
