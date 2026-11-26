@@ -644,3 +644,57 @@ test('custom plans have their own defaults', () => {
   expect(setCount('Bench Press')).toBe(5);
   expect(setCount('Shoulder Press')).toBe(2);
 });
+
+// A 3-set day of 10, 10, 8, then a 2-set day of 10, 10 later that week
+const mixedWeek = () =>
+  localStorage.setItem(
+    'gymWorkouts',
+    JSON.stringify([
+      {
+        id: 2, type: 'arms', date: '2026-11-20T10:00:00Z',
+        exercises: [{ id: 1, name: 'Bicep Curls', sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }] }],
+      },
+      {
+        id: 1, type: 'arms', date: '2026-11-17T10:00:00Z',
+        exercises: [{
+          id: 1, name: 'Bicep Curls',
+          sets: [{ weight: 20, reps: 10 }, { weight: 20, reps: 10 }, { weight: 20, reps: 8 }],
+        }],
+      },
+    ])
+  );
+
+const startArmsWorkout = () => {
+  userEvent.click(within(screen.getByRole('region', { name: /workouts/i })).getByText('Arms'));
+  userEvent.click(screen.getByRole('button', { name: /start workout/i }));
+  return within(screen.getByRole('region', { name: 'Bicep Curls' }));
+};
+
+test('a 3-set day is compared with the last 3-set day, not a 2-set day since', () => {
+  mixedWeek();
+  localStorage.setItem('gymSettings', JSON.stringify({ planDefaults: { arms: { sets: 3 } } }));
+  render(<App />);
+  const curls = startArmsWorkout();
+  expect(curls.getByText(/stay at 20 kg/i)).toBeInTheDocument();
+  expect(curls.getByText(/last 3-set session/i)).toBeInTheDocument();
+  expect(curls.getByLabelText('Set 3 weight in kg')).toHaveValue(20);
+});
+
+test('a 2-set day follows the last 2-set day', () => {
+  mixedWeek();
+  render(<App />);
+  const curls = startArmsWorkout();
+  expect(curls.getByText(/go up to 22\.5 kg/i)).toBeInTheDocument();
+  expect(curls.getByText(/last done/i)).toBeInTheDocument();
+});
+
+test('set to "Last time", a 3-set day follows whatever was done last', () => {
+  mixedWeek();
+  localStorage.setItem(
+    'gymSettings',
+    JSON.stringify({ compareBy: 'last', planDefaults: { arms: { sets: 3 } } })
+  );
+  render(<App />);
+  const curls = startArmsWorkout();
+  expect(curls.getByText(/go up to 22\.5 kg/i)).toBeInTheDocument();
+});

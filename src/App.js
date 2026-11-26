@@ -263,6 +263,9 @@ const DEFAULT_SETTINGS = {
   planTargets: {},
   // Each exercise's own defaults wherever it's done: { exercise: { sets, weight, jump } }
   exerciseDefaults: {},
+  // What suggestions compare with: "sets" = the last session with the same number of
+  // sets, "last" = the last session whatever the sets
+  compareBy: "sets",
 };
 
 // Weight jumps offered for one exercise; any other number can be typed in
@@ -690,6 +693,23 @@ export default function GymTracker() {
   };
   const jumpFor = (name, type) => resolveDefaults(settings, type, name).jump;
 
+  // Last time's sets and the suggestion for an exercise. With "same number of sets" on,
+  // only sessions where you logged that many sets count, unless there aren't any yet
+  const adviceFor = (name, atGym, defaults, st = settings) => {
+    const all = getExerciseHistory(name, atGym);
+    const same = all.filter((h) => completedSets(h.sets).length === defaults.sets);
+    const history = st.compareBy === "last" || !same.length ? all : same;
+    const last = history[0] || null;
+    return {
+      history,
+      rec: recommend(name, history, defaults.jump),
+      lastSets: last ? completedSets(last.sets) : null,
+      lastDate: last?.date || null,
+      // Set when that isn't the most recent session, so the workout can say so
+      sameSets: last && last !== all[0] ? defaults.sets : null,
+    };
+  };
+
   // Change settings, then bring the workout in progress up to date: exercises whose
   // defaults moved get a fresh suggestion, unlogged sets take the new weight, and the
   // new number of sets if nothing's logged yet
@@ -704,14 +724,14 @@ export default function GymTracker() {
       exercises: w.exercises.map((ex) => {
         const before = resolveDefaults(settings, type, ex.name);
         const after = resolveDefaults(next, type, ex.name);
-        if (["sets", "weight", "jump"].every((k) => before[k] === after[k])) return ex;
-        const history = getExerciseHistory(ex.name, atGym);
-        const rec = recommend(ex.name, history, after.jump);
+        const same = ["sets", "weight", "jump"].every((k) => before[k] === after[k]);
+        if (same && settings.compareBy === next.compareBy) return ex;
+        const { history, rec, lastSets, lastDate, sameSets } = adviceFor(ex.name, atGym, after, next);
         const weight = rec ? rec.weight : completedSets(history[0]?.sets)[0]?.weight ?? after.weight;
         let sets = ex.sets.map((st) => (st.reps || weight == null ? st : { ...st, weight }));
         if (!sets.some((st) => st.reps))
           sets = Array.from({ length: after.sets }, (_, i) => sets[i] || { weight: weight || 0, reps: 0 });
-        return { ...ex, rec, sets };
+        return { ...ex, rec, lastSets, lastDate, sameSets, sets };
       }),
     }));
   };
@@ -831,14 +851,11 @@ export default function GymTracker() {
   const buildExerciseEntry = (exerciseName, atGym, planId) => {
     // Sets, starting weight and weight jump from this workout's or the exercise's defaults
     const defaults = resolveDefaults(settings, planId, exerciseName);
-    const history = getExerciseHistory(exerciseName, atGym);
+    const { history, rec, lastSets, lastDate, sameSets } = adviceFor(exerciseName, atGym, defaults);
     // Weights don't carry between gyms, but show what you did elsewhere
     const away = history.length
       ? null
       : getExerciseHistory(exerciseName, null).find((h) => gymOf(h) !== atGym);
-    const last = history[0] || null;
-    const rec = recommend(exerciseName, history, defaults.jump);
-    const lastSets = last ? completedSets(last.sets) : null;
     // Pre-fill the recommended weight only. Reps start blank so every set is
     // something you typed, and Finish can spot any you forgot
     // A plan's starting weight only fills in until there's history to go on
@@ -852,7 +869,8 @@ export default function GymTracker() {
       name: exerciseName,
       sets,
       lastSets,
-      lastDate: last?.date || null,
+      lastDate,
+      sameSets,
       rec,
       elsewhere: away ? { gym: gymName(gymOf(away)), sets: completedSets(away.sets) } : null,
     };
@@ -1854,7 +1872,11 @@ export default function GymTracker() {
                   i,
                   last: history[0] || null,
                   best,
-                  rec: recommend(name, history, jumpFor(name, MUSCLE_TYPE_PREFIX + muscle.id)),
+                  rec: adviceFor(
+                    name,
+                    gymId,
+                    resolveDefaults(settings, MUSCLE_TYPE_PREFIX + muscle.id, name)
+                  ).rec,
                 };
               })
               .sort((a, b) =>
@@ -2636,6 +2658,24 @@ export default function GymTracker() {
               </div>
               <div className="setting-row">
                 <div className="row-main">
+                  <div className="row-title">Suggest from</div>
+                  <div className="row-sub">
+                    {settings.compareBy === "last"
+                      ? "The last time you did the exercise, however many sets."
+                      : "The last time you did the same number of sets, so 2-set days don't move your 3-set weight."}
+                  </div>
+                </div>
+                <Segmented
+                  label="Suggest from"
+                  options={["Same sets", "Last time"]}
+                  value={settings.compareBy === "last" ? "Last time" : "Same sets"}
+                  onChange={(v) =>
+                    changeSettings((st) => ({ ...st, compareBy: v === "Last time" ? "last" : "sets" }))
+                  }
+                />
+              </div>
+              <div className="setting-row">
+                <div className="row-main">
                   <div className="row-title">Sunday summary</div>
                   <div className="row-sub">Sets per body part for the week, on the Train screen on Sundays.</div>
                 </div>
@@ -2951,7 +2991,9 @@ export default function GymTracker() {
                             <h2>{exercise.name}</h2>
                             {lastDate && (
                               <p className="exercise-meta">
-                                Last done {relativeDay(lastDate).toLowerCase()}
+                                {exercise.sameSets
+                                  ? `Last ${exercise.sameSets}-set session ${relativeDay(lastDate).toLowerCase()}`
+                                  : `Last done ${relativeDay(lastDate).toLowerCase()}`}
                               </p>
                             )}
                           </div>
